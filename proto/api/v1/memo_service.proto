@@ -9,6 +9,7 @@ import "api/v1/resource_service.proto";
 import "google/api/annotations.proto";
 import "google/api/client.proto";
 import "google/api/field_behavior.proto";
+import "google/api/resource.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/field_mask.proto";
 import "google/protobuf/timestamp.proto";
@@ -116,6 +117,21 @@ service MemoService {
     option (google.api.http) = {delete: "/api/v1/reactions/{id}"};
     option (google.api.method_signature) = "id";
   }
+  // ExecuteAgentOnMemo triggers an agentic process on a memo.
+  rpc ExecuteAgentOnMemo(ExecuteAgentOnMemoRequest) returns (Memo) {
+    option (google.api.http) = {
+      post: "/api/v1/{name=memos/*}:executeAgent"
+      body: "*"
+    };
+    option (google.api.method_signature) = "name";
+  }
+  // StreamAgentTaskEvents streams events for a specific agent task.
+  rpc StreamAgentTaskEvents(StreamAgentTaskEventsRequest) returns (stream AgentTaskEvent) {
+    option (google.api.http) = {
+      get: "/api/v1/agentTasks/{agent_task_id}/events"
+    };
+    option (google.api.method_signature) = "agent_task_id";
+  }
 }
 
 enum Visibility {
@@ -123,6 +139,18 @@ enum Visibility {
   PRIVATE = 1;
   PROTECTED = 2;
   PUBLIC = 3;
+}
+
+// Enum for Agentic Task Status
+enum AgentStatus {
+  AGENT_STATUS_UNSPECIFIED = 0;
+  PENDING = 1;       // 任務已創建，等待處理
+  PLANNING = 2;      // Agent 正在規劃中
+  EXECUTING = 3;     // Agent 正在執行計劃步驟
+  COMPLETED = 4;     // Agent 任務成功完成
+  FAILED = 5;        // Agent 任務執行失敗
+  CANCELED = 6;      // 任務被取消
+  AGENT_STATUS_INTERRUPTED = 7; // Agent 任務被中斷，等待用戶反饋
 }
 
 message Memo {
@@ -174,6 +202,15 @@ message Memo {
 
   // The location of the memo.
   optional Location location = 20;
+
+  // Agentic Feature Fields
+  optional string agent_task_id = 21;        // Deer Flow task ID
+  optional AgentStatus agent_status = 22;    // Status of the agentic task
+  optional string agent_query_text = 23;   // Original query text for the agent
+  optional string agent_plan_json = 24;      // JSON string of the agent's plan
+  optional string agent_steps_json = 25;     // JSON string of the agent's execution steps
+  optional string agent_result_json = 26;    // JSON string of the agent's final result
+  optional string agent_error_message = 27;  // Error message if the agent task failed
 
   message Property {
     bool has_link = 1;
@@ -360,4 +397,34 @@ message DeleteMemoReactionRequest {
   // The id of the reaction.
   // Refer to the `Reaction.id`.
   int32 id = 1;
+}
+
+message ExecuteAgentOnMemoRequest {
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "memos.api.v1.Memo"];
+  optional string query_text = 2; // Specific query for the agent, if different from memo content.
+
+  // Optional parameters to override DeerFlow defaults or Memos server-side defaults
+  optional int32 max_plan_iterations = 3;
+  optional int32 max_step_num = 4;
+  optional int32 max_search_results = 5;
+  optional bool auto_accepted_plan = 6;
+  optional string interrupt_feedback = 7; // For resuming a previously interrupted task
+  map<string, string> mcp_settings_override = 8;
+  optional bool enable_background_investigation = 9;
+}
+
+message StreamAgentTaskEventsRequest {
+  string agent_task_id = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message AgentTaskEvent {
+  string event_type = 1;       // e.g., "message_chunk", "interrupt", "status_update", "final_result", "error"
+  string data_json = 2;        // The JSON payload of the event from DeerFlow, or a Memos-defined structure
+  google.protobuf.Timestamp timestamp = 3; // When Memos processed/relayed this event
+  bool is_partial = 4;         // True if this event represents a piece of a larger message (e.g., a message_chunk)
+  bool is_error = 5;           // True if this event specifically represents an error condition
+  optional string error_message = 6;    // Detailed error message if is_error is true
+  optional AgentStatus current_agent_status = 7; // The overall status of the agent task as understood by Memos after this event
+  optional string finish_reason = 8; // If applicable (e.g. from a message_chunk), the reason the agent/stream finished
+  optional string source_event_id = 9; // Optional: ID of the original event from DeerFlow if available (e.g. SSE 'id' field)
 }

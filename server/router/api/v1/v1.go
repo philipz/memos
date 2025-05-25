@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/improbable-eng/grpc-web/go/grpcweb"
@@ -39,6 +40,10 @@ type APIV1Service struct {
 	Store   *store.Store
 
 	grpcServer *grpc.Server
+
+	// For Agentic SSE streaming
+	agentEventChannels      map[string]chan *v1pb.AgentTaskEvent
+	agentEventChannelsMutex sync.Mutex
 }
 
 func NewAPIV1Service(secret string, profile *profile.Profile, store *store.Store, grpcServer *grpc.Server) *APIV1Service {
@@ -48,6 +53,8 @@ func NewAPIV1Service(secret string, profile *profile.Profile, store *store.Store
 		Profile:    profile,
 		Store:      store,
 		grpcServer: grpcServer,
+		// Initialize the map for agent event channels
+		agentEventChannels: make(map[string]chan *v1pb.AgentTaskEvent),
 	}
 	grpc_health_v1.RegisterHealthServer(grpcServer, apiv1Service)
 	v1pb.RegisterWorkspaceServiceServer(grpcServer, apiv1Service)

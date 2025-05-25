@@ -19,6 +19,32 @@ consumes:
 produces:
   - application/json
 paths:
+  /api/v1/agentTasks/{agentTaskId}/events:
+    get:
+      summary: StreamAgentTaskEvents streams events for a specific agent task.
+      operationId: MemoService_StreamAgentTaskEvents
+      responses:
+        "200":
+          description: A successful response.(streaming responses)
+          schema:
+            type: object
+            properties:
+              result:
+                $ref: '#/definitions/v1AgentTaskEvent'
+              error:
+                $ref: '#/definitions/googlerpcStatus'
+            title: Stream result of v1AgentTaskEvent
+        default:
+          description: An unexpected error response.
+          schema:
+            $ref: '#/definitions/googlerpcStatus'
+      parameters:
+        - name: agentTaskId
+          in: path
+          required: true
+          type: string
+      tags:
+        - MemoService
   /api/v1/auth/signin:
     post:
       summary: SignIn signs in the user.
@@ -891,6 +917,28 @@ paths:
               location:
                 $ref: '#/definitions/apiv1Location'
                 description: The location of the memo.
+              agentTaskId:
+                type: string
+                description: Deer Flow task ID
+                title: Agentic Feature Fields
+              agentStatus:
+                $ref: '#/definitions/v1AgentStatus'
+                title: Status of the agentic task
+              agentQueryText:
+                type: string
+                title: Original query text for the agent
+              agentPlanJson:
+                type: string
+                title: JSON string of the agent's plan
+              agentStepsJson:
+                type: string
+                title: JSON string of the agent's execution steps
+              agentResultJson:
+                type: string
+                title: JSON string of the agent's final result
+              agentErrorMessage:
+                type: string
+                title: Error message if the agent task failed
             title: |-
               The memo to update.
               The `name` field is required.
@@ -1435,6 +1483,32 @@ paths:
           pattern: users/[^/]+
       tags:
         - UserService
+  /api/v1/{name}:executeAgent:
+    post:
+      summary: ExecuteAgentOnMemo triggers an agentic process on a memo.
+      operationId: MemoService_ExecuteAgentOnMemo
+      responses:
+        "200":
+          description: A successful response.
+          schema:
+            $ref: '#/definitions/apiv1Memo'
+        default:
+          description: An unexpected error response.
+          schema:
+            $ref: '#/definitions/googlerpcStatus'
+      parameters:
+        - name: name
+          in: path
+          required: true
+          type: string
+          pattern: memos/[^/]+
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: '#/definitions/MemoServiceExecuteAgentOnMemoBody'
+      tags:
+        - MemoService
   /api/v1/{parent}/memos:
     get:
       summary: ListMemos lists memos with pagination and filter.
@@ -1914,6 +1988,33 @@ definitions:
       - UNORDERED
       - DESCRIPTION
     default: KIND_UNSPECIFIED
+  MemoServiceExecuteAgentOnMemoBody:
+    type: object
+    properties:
+      queryText:
+        type: string
+        description: Specific query for the agent, if different from memo content.
+      maxPlanIterations:
+        type: integer
+        format: int32
+        title: Optional parameters to override DeerFlow defaults or Memos server-side defaults
+      maxStepNum:
+        type: integer
+        format: int32
+      maxSearchResults:
+        type: integer
+        format: int32
+      autoAcceptedPlan:
+        type: boolean
+      interruptFeedback:
+        type: string
+        title: For resuming a previously interrupted task
+      mcpSettingsOverride:
+        type: object
+        additionalProperties:
+          type: string
+      enableBackgroundInvestigation:
+        type: boolean
   MemoServiceRenameMemoTagBody:
     type: object
     properties:
@@ -2199,6 +2300,28 @@ definitions:
       location:
         $ref: '#/definitions/apiv1Location'
         description: The location of the memo.
+      agentTaskId:
+        type: string
+        description: Deer Flow task ID
+        title: Agentic Feature Fields
+      agentStatus:
+        $ref: '#/definitions/v1AgentStatus'
+        title: Status of the agentic task
+      agentQueryText:
+        type: string
+        title: Original query text for the agent
+      agentPlanJson:
+        type: string
+        title: JSON string of the agent's plan
+      agentStepsJson:
+        type: string
+        title: JSON string of the agent's execution steps
+      agentResultJson:
+        type: string
+        title: JSON string of the agent's final result
+      agentErrorMessage:
+        type: string
+        title: Error message if the agent task failed
   apiv1OAuth2Config:
     type: object
     properties:
@@ -2530,6 +2653,58 @@ definitions:
       payload:
         $ref: '#/definitions/apiv1ActivityPayload'
         description: The payload of the activity.
+  v1AgentStatus:
+    type: string
+    enum:
+      - AGENT_STATUS_UNSPECIFIED
+      - PENDING
+      - PLANNING
+      - EXECUTING
+      - COMPLETED
+      - FAILED
+      - CANCELED
+      - AGENT_STATUS_INTERRUPTED
+    default: AGENT_STATUS_UNSPECIFIED
+    description: |-
+      - PENDING: 任務已創建，等待處理
+       - PLANNING: Agent 正在規劃中
+       - EXECUTING: Agent 正在執行計劃步驟
+       - COMPLETED: Agent 任務成功完成
+       - FAILED: Agent 任務執行失敗
+       - CANCELED: 任務被取消
+       - AGENT_STATUS_INTERRUPTED: Agent 任務被中斷，等待用戶反饋
+    title: Enum for Agentic Task Status
+  v1AgentTaskEvent:
+    type: object
+    properties:
+      eventType:
+        type: string
+        title: e.g., "message_chunk", "interrupt", "status_update", "final_result", "error"
+      dataJson:
+        type: string
+        title: The JSON payload of the event from DeerFlow, or a Memos-defined structure
+      timestamp:
+        type: string
+        format: date-time
+        title: When Memos processed/relayed this event
+      isPartial:
+        type: boolean
+        title: True if this event represents a piece of a larger message (e.g., a message_chunk)
+      isError:
+        type: boolean
+        title: True if this event specifically represents an error condition
+      errorMessage:
+        type: string
+        title: Detailed error message if is_error is true
+      currentAgentStatus:
+        $ref: '#/definitions/v1AgentStatus'
+        title: The overall status of the agent task as understood by Memos after this event
+      finishReason:
+        type: string
+        title: If applicable (e.g. from a message_chunk), the reason the agent/stream finished
+      sourceEventId:
+        type: string
+        title: 'Optional: ID of the original event from DeerFlow if available (e.g. SSE ''id'' field)'
   v1AutoLinkNode:
     type: object
     properties:

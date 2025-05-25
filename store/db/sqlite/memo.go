@@ -82,6 +82,9 @@ func (d *DB) ListMemos(ctx context.Context, find *store.FindMemo) ([]*store.Memo
 	if v := find.Pinned; v != nil {
 		where, args = append(where, "`memo`.`pinned` = ?"), append(args, *v)
 	}
+	if v := find.AgentTaskID; v != nil {
+		where, args = append(where, "`memo`.`agent_task_id` = ?"), append(args, *v)
+	}
 	if v := find.PayloadFind; v != nil {
 		if v.Raw != nil {
 			where, args = append(where, "`memo`.`payload` = ?"), append(args, *v.Raw)

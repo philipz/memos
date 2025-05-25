@@ -32,6 +32,10 @@ type Profile struct {
 	Version string
 	// InstanceURL is the url of your memos instance.
 	InstanceURL string
+	// DeerFlowEndpoint is the endpoint for the DeerFlow service.
+	DeerFlowEndpoint string
+	// DeerFlowAPIKey is the API key for the DeerFlow service.
+	DeerFlowAPIKey string
 }
 
 func (p *Profile) IsDev() bool {

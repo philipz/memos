@@ -757,6 +757,75 @@ func local_request_MemoService_DeleteMemoReaction_0(ctx context.Context, marshal
 	return msg, metadata, err
 }
 
+func request_MemoService_ExecuteAgentOnMemo_0(ctx context.Context, marshaler runtime.Marshaler, client MemoServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq ExecuteAgentOnMemoRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["name"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "name")
+	}
+	protoReq.Name, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "name", err)
+	}
+	msg, err := client.ExecuteAgentOnMemo(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_MemoService_ExecuteAgentOnMemo_0(ctx context.Context, marshaler runtime.Marshaler, server MemoServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq ExecuteAgentOnMemoRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["name"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "name")
+	}
+	protoReq.Name, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "name", err)
+	}
+	msg, err := server.ExecuteAgentOnMemo(ctx, &protoReq)
+	return msg, metadata, err
+}
+
+func request_MemoService_StreamAgentTaskEvents_0(ctx context.Context, marshaler runtime.Marshaler, client MemoServiceClient, req *http.Request, pathParams map[string]string) (MemoService_StreamAgentTaskEventsClient, runtime.ServerMetadata, error) {
+	var (
+		protoReq StreamAgentTaskEventsRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	io.Copy(io.Discard, req.Body)
+	val, ok := pathParams["agent_task_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "agent_task_id")
+	}
+	protoReq.AgentTaskId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "agent_task_id", err)
+	}
+	stream, err := client.StreamAgentTaskEvents(ctx, &protoReq)
+	if err != nil {
+		return nil, metadata, err
+	}
+	header, err := stream.Header()
+	if err != nil {
+		return nil, metadata, err
+	}
+	metadata.HeaderMD = header
+	return stream, metadata, nil
+}
+
 // RegisterMemoServiceHandlerServer registers the http handlers for service MemoService to "mux".
 // UnaryRPC     :call MemoServiceServer directly.
 // StreamingRPC :currently unsupported pending https://github.com/grpc/grpc-go/issues/906.
@@ -1103,6 +1172,33 @@ func RegisterMemoServiceHandlerServer(ctx context.Context, mux *runtime.ServeMux
 		}
 		forward_MemoService_DeleteMemoReaction_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodPost, pattern_MemoService_ExecuteAgentOnMemo_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/memos.api.v1.MemoService/ExecuteAgentOnMemo", runtime.WithHTTPPathPattern("/api/v1/{name=memos/*}:executeAgent"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_MemoService_ExecuteAgentOnMemo_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_MemoService_ExecuteAgentOnMemo_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+
+	mux.Handle(http.MethodGet, pattern_MemoService_StreamAgentTaskEvents_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		err := status.Error(codes.Unimplemented, "streaming calls are not yet supported in the in-process transport")
+		_, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+		return
+	})
 
 	return nil
 }
@@ -1432,45 +1528,83 @@ func RegisterMemoServiceHandlerClient(ctx context.Context, mux *runtime.ServeMux
 		}
 		forward_MemoService_DeleteMemoReaction_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodPost, pattern_MemoService_ExecuteAgentOnMemo_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/memos.api.v1.MemoService/ExecuteAgentOnMemo", runtime.WithHTTPPathPattern("/api/v1/{name=memos/*}:executeAgent"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_MemoService_ExecuteAgentOnMemo_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_MemoService_ExecuteAgentOnMemo_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodGet, pattern_MemoService_StreamAgentTaskEvents_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/memos.api.v1.MemoService/StreamAgentTaskEvents", runtime.WithHTTPPathPattern("/api/v1/agentTasks/{agent_task_id}/events"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_MemoService_StreamAgentTaskEvents_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_MemoService_StreamAgentTaskEvents_0(annotatedContext, mux, outboundMarshaler, w, req, func() (proto.Message, error) { return resp.Recv() }, mux.GetForwardResponseOptions()...)
+	})
 	return nil
 }
 
 var (
-	pattern_MemoService_CreateMemo_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "memos"}, ""))
-	pattern_MemoService_ListMemos_0          = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "memos"}, ""))
-	pattern_MemoService_ListMemos_1          = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "users", "parent", "memos"}, ""))
-	pattern_MemoService_GetMemo_0            = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3}, []string{"api", "v1", "memos", "name"}, ""))
-	pattern_MemoService_UpdateMemo_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3}, []string{"api", "v1", "memos", "memo.name"}, ""))
-	pattern_MemoService_DeleteMemo_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3}, []string{"api", "v1", "memos", "name"}, ""))
-	pattern_MemoService_RenameMemoTag_0      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "parent", "tags"}, "rename"))
-	pattern_MemoService_DeleteMemoTag_0      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4, 1, 0, 4, 1, 5, 5}, []string{"api", "v1", "memos", "parent", "tags", "tag"}, ""))
-	pattern_MemoService_SetMemoResources_0   = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "resources"}, ""))
-	pattern_MemoService_ListMemoResources_0  = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "resources"}, ""))
-	pattern_MemoService_SetMemoRelations_0   = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "relations"}, ""))
-	pattern_MemoService_ListMemoRelations_0  = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "relations"}, ""))
-	pattern_MemoService_CreateMemoComment_0  = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "comments"}, ""))
-	pattern_MemoService_ListMemoComments_0   = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "comments"}, ""))
-	pattern_MemoService_ListMemoReactions_0  = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "reactions"}, ""))
-	pattern_MemoService_UpsertMemoReaction_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "reactions"}, ""))
-	pattern_MemoService_DeleteMemoReaction_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"api", "v1", "reactions", "id"}, ""))
+	pattern_MemoService_CreateMemo_0            = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "memos"}, ""))
+	pattern_MemoService_ListMemos_0             = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "memos"}, ""))
+	pattern_MemoService_ListMemos_1             = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "users", "parent", "memos"}, ""))
+	pattern_MemoService_GetMemo_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3}, []string{"api", "v1", "memos", "name"}, ""))
+	pattern_MemoService_UpdateMemo_0            = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3}, []string{"api", "v1", "memos", "memo.name"}, ""))
+	pattern_MemoService_DeleteMemo_0            = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3}, []string{"api", "v1", "memos", "name"}, ""))
+	pattern_MemoService_RenameMemoTag_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "parent", "tags"}, "rename"))
+	pattern_MemoService_DeleteMemoTag_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4, 1, 0, 4, 1, 5, 5}, []string{"api", "v1", "memos", "parent", "tags", "tag"}, ""))
+	pattern_MemoService_SetMemoResources_0      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "resources"}, ""))
+	pattern_MemoService_ListMemoResources_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "resources"}, ""))
+	pattern_MemoService_SetMemoRelations_0      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "relations"}, ""))
+	pattern_MemoService_ListMemoRelations_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "relations"}, ""))
+	pattern_MemoService_CreateMemoComment_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "comments"}, ""))
+	pattern_MemoService_ListMemoComments_0      = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "comments"}, ""))
+	pattern_MemoService_ListMemoReactions_0     = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "reactions"}, ""))
+	pattern_MemoService_UpsertMemoReaction_0    = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3, 2, 4}, []string{"api", "v1", "memos", "name", "reactions"}, ""))
+	pattern_MemoService_DeleteMemoReaction_0    = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"api", "v1", "reactions", "id"}, ""))
+	pattern_MemoService_ExecuteAgentOnMemo_0    = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 2, 5, 3}, []string{"api", "v1", "memos", "name"}, "executeAgent"))
+	pattern_MemoService_StreamAgentTaskEvents_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "agentTasks", "agent_task_id", "events"}, ""))
 )
 
 var (
-	forward_MemoService_CreateMemo_0         = runtime.ForwardResponseMessage
-	forward_MemoService_ListMemos_0          = runtime.ForwardResponseMessage
-	forward_MemoService_ListMemos_1          = runtime.ForwardResponseMessage
-	forward_MemoService_GetMemo_0            = runtime.ForwardResponseMessage
-	forward_MemoService_UpdateMemo_0         = runtime.ForwardResponseMessage
-	forward_MemoService_DeleteMemo_0         = runtime.ForwardResponseMessage
-	forward_MemoService_RenameMemoTag_0      = runtime.ForwardResponseMessage
-	forward_MemoService_DeleteMemoTag_0      = runtime.ForwardResponseMessage
-	forward_MemoService_SetMemoResources_0   = runtime.ForwardResponseMessage
-	forward_MemoService_ListMemoResources_0  = runtime.ForwardResponseMessage
-	forward_MemoService_SetMemoRelations_0   = runtime.ForwardResponseMessage
-	forward_MemoService_ListMemoRelations_0  = runtime.ForwardResponseMessage
-	forward_MemoService_CreateMemoComment_0  = runtime.ForwardResponseMessage
-	forward_MemoService_ListMemoComments_0   = runtime.ForwardResponseMessage
-	forward_MemoService_ListMemoReactions_0  = runtime.ForwardResponseMessage
-	forward_MemoService_UpsertMemoReaction_0 = runtime.ForwardResponseMessage
-	forward_MemoService_DeleteMemoReaction_0 = runtime.ForwardResponseMessage
+	forward_MemoService_CreateMemo_0            = runtime.ForwardResponseMessage
+	forward_MemoService_ListMemos_0             = runtime.ForwardResponseMessage
+	forward_MemoService_ListMemos_1             = runtime.ForwardResponseMessage
+	forward_MemoService_GetMemo_0               = runtime.ForwardResponseMessage
+	forward_MemoService_UpdateMemo_0            = runtime.ForwardResponseMessage
+	forward_MemoService_DeleteMemo_0            = runtime.ForwardResponseMessage
+	forward_MemoService_RenameMemoTag_0         = runtime.ForwardResponseMessage
+	forward_MemoService_DeleteMemoTag_0         = runtime.ForwardResponseMessage
+	forward_MemoService_SetMemoResources_0      = runtime.ForwardResponseMessage
+	forward_MemoService_ListMemoResources_0     = runtime.ForwardResponseMessage
+	forward_MemoService_SetMemoRelations_0      = runtime.ForwardResponseMessage
+	forward_MemoService_ListMemoRelations_0     = runtime.ForwardResponseMessage
+	forward_MemoService_CreateMemoComment_0     = runtime.ForwardResponseMessage
+	forward_MemoService_ListMemoComments_0      = runtime.ForwardResponseMessage
+	forward_MemoService_ListMemoReactions_0     = runtime.ForwardResponseMessage
+	forward_MemoService_UpsertMemoReaction_0    = runtime.ForwardResponseMessage
+	forward_MemoService_DeleteMemoReaction_0    = runtime.ForwardResponseMessage
+	forward_MemoService_ExecuteAgentOnMemo_0    = runtime.ForwardResponseMessage
+	forward_MemoService_StreamAgentTaskEvents_0 = runtime.ForwardResponseStream
 )

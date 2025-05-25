@@ -20,22 +20,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MemoService_CreateMemo_FullMethodName         = "/memos.api.v1.MemoService/CreateMemo"
-	MemoService_ListMemos_FullMethodName          = "/memos.api.v1.MemoService/ListMemos"
-	MemoService_GetMemo_FullMethodName            = "/memos.api.v1.MemoService/GetMemo"
-	MemoService_UpdateMemo_FullMethodName         = "/memos.api.v1.MemoService/UpdateMemo"
-	MemoService_DeleteMemo_FullMethodName         = "/memos.api.v1.MemoService/DeleteMemo"
-	MemoService_RenameMemoTag_FullMethodName      = "/memos.api.v1.MemoService/RenameMemoTag"
-	MemoService_DeleteMemoTag_FullMethodName      = "/memos.api.v1.MemoService/DeleteMemoTag"
-	MemoService_SetMemoResources_FullMethodName   = "/memos.api.v1.MemoService/SetMemoResources"
-	MemoService_ListMemoResources_FullMethodName  = "/memos.api.v1.MemoService/ListMemoResources"
-	MemoService_SetMemoRelations_FullMethodName   = "/memos.api.v1.MemoService/SetMemoRelations"
-	MemoService_ListMemoRelations_FullMethodName  = "/memos.api.v1.MemoService/ListMemoRelations"
-	MemoService_CreateMemoComment_FullMethodName  = "/memos.api.v1.MemoService/CreateMemoComment"
-	MemoService_ListMemoComments_FullMethodName   = "/memos.api.v1.MemoService/ListMemoComments"
-	MemoService_ListMemoReactions_FullMethodName  = "/memos.api.v1.MemoService/ListMemoReactions"
-	MemoService_UpsertMemoReaction_FullMethodName = "/memos.api.v1.MemoService/UpsertMemoReaction"
-	MemoService_DeleteMemoReaction_FullMethodName = "/memos.api.v1.MemoService/DeleteMemoReaction"
+	MemoService_CreateMemo_FullMethodName            = "/memos.api.v1.MemoService/CreateMemo"
+	MemoService_ListMemos_FullMethodName             = "/memos.api.v1.MemoService/ListMemos"
+	MemoService_GetMemo_FullMethodName               = "/memos.api.v1.MemoService/GetMemo"
+	MemoService_UpdateMemo_FullMethodName            = "/memos.api.v1.MemoService/UpdateMemo"
+	MemoService_DeleteMemo_FullMethodName            = "/memos.api.v1.MemoService/DeleteMemo"
+	MemoService_RenameMemoTag_FullMethodName         = "/memos.api.v1.MemoService/RenameMemoTag"
+	MemoService_DeleteMemoTag_FullMethodName         = "/memos.api.v1.MemoService/DeleteMemoTag"
+	MemoService_SetMemoResources_FullMethodName      = "/memos.api.v1.MemoService/SetMemoResources"
+	MemoService_ListMemoResources_FullMethodName     = "/memos.api.v1.MemoService/ListMemoResources"
+	MemoService_SetMemoRelations_FullMethodName      = "/memos.api.v1.MemoService/SetMemoRelations"
+	MemoService_ListMemoRelations_FullMethodName     = "/memos.api.v1.MemoService/ListMemoRelations"
+	MemoService_CreateMemoComment_FullMethodName     = "/memos.api.v1.MemoService/CreateMemoComment"
+	MemoService_ListMemoComments_FullMethodName      = "/memos.api.v1.MemoService/ListMemoComments"
+	MemoService_ListMemoReactions_FullMethodName     = "/memos.api.v1.MemoService/ListMemoReactions"
+	MemoService_UpsertMemoReaction_FullMethodName    = "/memos.api.v1.MemoService/UpsertMemoReaction"
+	MemoService_DeleteMemoReaction_FullMethodName    = "/memos.api.v1.MemoService/DeleteMemoReaction"
+	MemoService_ExecuteAgentOnMemo_FullMethodName    = "/memos.api.v1.MemoService/ExecuteAgentOnMemo"
+	MemoService_StreamAgentTaskEvents_FullMethodName = "/memos.api.v1.MemoService/StreamAgentTaskEvents"
 )
 
 // MemoServiceClient is the client API for MemoService service.
@@ -74,6 +76,10 @@ type MemoServiceClient interface {
 	UpsertMemoReaction(ctx context.Context, in *UpsertMemoReactionRequest, opts ...grpc.CallOption) (*Reaction, error)
 	// DeleteMemoReaction deletes a reaction for a memo.
 	DeleteMemoReaction(ctx context.Context, in *DeleteMemoReactionRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// ExecuteAgentOnMemo triggers an agentic process on a memo.
+	ExecuteAgentOnMemo(ctx context.Context, in *ExecuteAgentOnMemoRequest, opts ...grpc.CallOption) (*Memo, error)
+	// StreamAgentTaskEvents streams events for a specific agent task.
+	StreamAgentTaskEvents(ctx context.Context, in *StreamAgentTaskEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AgentTaskEvent], error)
 }
 
 type memoServiceClient struct {
@@ -244,6 +250,35 @@ func (c *memoServiceClient) DeleteMemoReaction(ctx context.Context, in *DeleteMe
 	return out, nil
 }
 
+func (c *memoServiceClient) ExecuteAgentOnMemo(ctx context.Context, in *ExecuteAgentOnMemoRequest, opts ...grpc.CallOption) (*Memo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Memo)
+	err := c.cc.Invoke(ctx, MemoService_ExecuteAgentOnMemo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *memoServiceClient) StreamAgentTaskEvents(ctx context.Context, in *StreamAgentTaskEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AgentTaskEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &MemoService_ServiceDesc.Streams[0], MemoService_StreamAgentTaskEvents_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamAgentTaskEventsRequest, AgentTaskEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type MemoService_StreamAgentTaskEventsClient = grpc.ServerStreamingClient[AgentTaskEvent]
+
 // MemoServiceServer is the server API for MemoService service.
 // All implementations must embed UnimplementedMemoServiceServer
 // for forward compatibility.
@@ -280,6 +315,10 @@ type MemoServiceServer interface {
 	UpsertMemoReaction(context.Context, *UpsertMemoReactionRequest) (*Reaction, error)
 	// DeleteMemoReaction deletes a reaction for a memo.
 	DeleteMemoReaction(context.Context, *DeleteMemoReactionRequest) (*emptypb.Empty, error)
+	// ExecuteAgentOnMemo triggers an agentic process on a memo.
+	ExecuteAgentOnMemo(context.Context, *ExecuteAgentOnMemoRequest) (*Memo, error)
+	// StreamAgentTaskEvents streams events for a specific agent task.
+	StreamAgentTaskEvents(*StreamAgentTaskEventsRequest, grpc.ServerStreamingServer[AgentTaskEvent]) error
 	mustEmbedUnimplementedMemoServiceServer()
 }
 
@@ -337,6 +376,12 @@ func (UnimplementedMemoServiceServer) UpsertMemoReaction(context.Context, *Upser
 }
 func (UnimplementedMemoServiceServer) DeleteMemoReaction(context.Context, *DeleteMemoReactionRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteMemoReaction not implemented")
+}
+func (UnimplementedMemoServiceServer) ExecuteAgentOnMemo(context.Context, *ExecuteAgentOnMemoRequest) (*Memo, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ExecuteAgentOnMemo not implemented")
+}
+func (UnimplementedMemoServiceServer) StreamAgentTaskEvents(*StreamAgentTaskEventsRequest, grpc.ServerStreamingServer[AgentTaskEvent]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamAgentTaskEvents not implemented")
 }
 func (UnimplementedMemoServiceServer) mustEmbedUnimplementedMemoServiceServer() {}
 func (UnimplementedMemoServiceServer) testEmbeddedByValue()                     {}
@@ -647,6 +692,35 @@ func _MemoService_DeleteMemoReaction_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MemoService_ExecuteAgentOnMemo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteAgentOnMemoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MemoServiceServer).ExecuteAgentOnMemo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MemoService_ExecuteAgentOnMemo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MemoServiceServer).ExecuteAgentOnMemo(ctx, req.(*ExecuteAgentOnMemoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MemoService_StreamAgentTaskEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamAgentTaskEventsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(MemoServiceServer).StreamAgentTaskEvents(m, &grpc.GenericServerStream[StreamAgentTaskEventsRequest, AgentTaskEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type MemoService_StreamAgentTaskEventsServer = grpc.ServerStreamingServer[AgentTaskEvent]
+
 // MemoService_ServiceDesc is the grpc.ServiceDesc for MemoService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -718,7 +792,17 @@ var MemoService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "DeleteMemoReaction",
 			Handler:    _MemoService_DeleteMemoReaction_Handler,
 		},
+		{
+			MethodName: "ExecuteAgentOnMemo",
+			Handler:    _MemoService_ExecuteAgentOnMemo_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamAgentTaskEvents",
+			Handler:       _MemoService_StreamAgentTaskEvents_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "api/v1/memo_service.proto",
 }

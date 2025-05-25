@@ -61,6 +61,83 @@ export function visibilityToNumber(object: Visibility): number {
   }
 }
 
+/** Enum for Agentic Task Status */
+export enum AgentStatus {
+  AGENT_STATUS_UNSPECIFIED = "AGENT_STATUS_UNSPECIFIED",
+  /** PENDING - 任務已創建，等待處理 */
+  PENDING = "PENDING",
+  /** PLANNING - Agent 正在規劃中 */
+  PLANNING = "PLANNING",
+  /** EXECUTING - Agent 正在執行計劃步驟 */
+  EXECUTING = "EXECUTING",
+  /** COMPLETED - Agent 任務成功完成 */
+  COMPLETED = "COMPLETED",
+  /** FAILED - Agent 任務執行失敗 */
+  FAILED = "FAILED",
+  /** CANCELED - 任務被取消 */
+  CANCELED = "CANCELED",
+  /** AGENT_STATUS_INTERRUPTED - Agent 任務被中斷，等待用戶反饋 */
+  AGENT_STATUS_INTERRUPTED = "AGENT_STATUS_INTERRUPTED",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
+export function agentStatusFromJSON(object: any): AgentStatus {
+  switch (object) {
+    case 0:
+    case "AGENT_STATUS_UNSPECIFIED":
+      return AgentStatus.AGENT_STATUS_UNSPECIFIED;
+    case 1:
+    case "PENDING":
+      return AgentStatus.PENDING;
+    case 2:
+    case "PLANNING":
+      return AgentStatus.PLANNING;
+    case 3:
+    case "EXECUTING":
+      return AgentStatus.EXECUTING;
+    case 4:
+    case "COMPLETED":
+      return AgentStatus.COMPLETED;
+    case 5:
+    case "FAILED":
+      return AgentStatus.FAILED;
+    case 6:
+    case "CANCELED":
+      return AgentStatus.CANCELED;
+    case 7:
+    case "AGENT_STATUS_INTERRUPTED":
+      return AgentStatus.AGENT_STATUS_INTERRUPTED;
+    case -1:
+    case "UNRECOGNIZED":
+    default:
+      return AgentStatus.UNRECOGNIZED;
+  }
+}
+
+export function agentStatusToNumber(object: AgentStatus): number {
+  switch (object) {
+    case AgentStatus.AGENT_STATUS_UNSPECIFIED:
+      return 0;
+    case AgentStatus.PENDING:
+      return 1;
+    case AgentStatus.PLANNING:
+      return 2;
+    case AgentStatus.EXECUTING:
+      return 3;
+    case AgentStatus.COMPLETED:
+      return 4;
+    case AgentStatus.FAILED:
+      return 5;
+    case AgentStatus.CANCELED:
+      return 6;
+    case AgentStatus.AGENT_STATUS_INTERRUPTED:
+      return 7;
+    case AgentStatus.UNRECOGNIZED:
+    default:
+      return -1;
+  }
+}
+
 export interface Memo {
   /**
    * The name of the memo.
@@ -97,7 +174,35 @@ export interface Memo {
   /** The snippet of the memo content. Plain text only. */
   snippet: string;
   /** The location of the memo. */
-  location?: Location | undefined;
+  location?:
+    | Location
+    | undefined;
+  /** Agentic Feature Fields */
+  agentTaskId?:
+    | string
+    | undefined;
+  /** Status of the agentic task */
+  agentStatus?:
+    | AgentStatus
+    | undefined;
+  /** Original query text for the agent */
+  agentQueryText?:
+    | string
+    | undefined;
+  /** JSON string of the agent's plan */
+  agentPlanJson?:
+    | string
+    | undefined;
+  /** JSON string of the agent's execution steps */
+  agentStepsJson?:
+    | string
+    | undefined;
+  /** JSON string of the agent's final result */
+  agentResultJson?:
+    | string
+    | undefined;
+  /** Error message if the agent task failed */
+  agentErrorMessage?: string | undefined;
 }
 
 export interface Memo_Property {
@@ -331,6 +436,63 @@ export interface DeleteMemoReactionRequest {
   id: number;
 }
 
+export interface ExecuteAgentOnMemoRequest {
+  name: string;
+  /** Specific query for the agent, if different from memo content. */
+  queryText?:
+    | string
+    | undefined;
+  /** Optional parameters to override DeerFlow defaults or Memos server-side defaults */
+  maxPlanIterations?: number | undefined;
+  maxStepNum?: number | undefined;
+  maxSearchResults?: number | undefined;
+  autoAcceptedPlan?:
+    | boolean
+    | undefined;
+  /** For resuming a previously interrupted task */
+  interruptFeedback?: string | undefined;
+  mcpSettingsOverride: { [key: string]: string };
+  enableBackgroundInvestigation?: boolean | undefined;
+}
+
+export interface ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry {
+  key: string;
+  value: string;
+}
+
+export interface StreamAgentTaskEventsRequest {
+  agentTaskId: string;
+}
+
+export interface AgentTaskEvent {
+  /** e.g., "message_chunk", "interrupt", "status_update", "final_result", "error" */
+  eventType: string;
+  /** The JSON payload of the event from DeerFlow, or a Memos-defined structure */
+  dataJson: string;
+  /** When Memos processed/relayed this event */
+  timestamp?:
+    | Date
+    | undefined;
+  /** True if this event represents a piece of a larger message (e.g., a message_chunk) */
+  isPartial: boolean;
+  /** True if this event specifically represents an error condition */
+  isError: boolean;
+  /** Detailed error message if is_error is true */
+  errorMessage?:
+    | string
+    | undefined;
+  /** The overall status of the agent task as understood by Memos after this event */
+  currentAgentStatus?:
+    | AgentStatus
+    | undefined;
+  /** If applicable (e.g. from a message_chunk), the reason the agent/stream finished */
+  finishReason?:
+    | string
+    | undefined;
+  /** Optional: ID of the original event from DeerFlow if available (e.g. SSE 'id' field) */
+  sourceEventId?: string | undefined;
+}
+
 function createBaseMemo(): Memo {
   return {
     name: "",
@@ -351,6 +513,13 @@ function createBaseMemo(): Memo {
     parent: undefined,
     snippet: "",
     location: undefined,
+    agentTaskId: undefined,
+    agentStatus: undefined,
+    agentQueryText: undefined,
+    agentPlanJson: undefined,
+    agentStepsJson: undefined,
+    agentResultJson: undefined,
+    agentErrorMessage: undefined,
   };
 }
 
@@ -409,6 +578,27 @@ export const Memo: MessageFns<Memo> = {
     }
     if (message.location !== undefined) {
       Location.encode(message.location, writer.uint32(162).fork()).join();
+    }
+    if (message.agentTaskId !== undefined) {
+      writer.uint32(170).string(message.agentTaskId);
+    }
+    if (message.agentStatus !== undefined) {
+      writer.uint32(176).int32(agentStatusToNumber(message.agentStatus));
+    }
+    if (message.agentQueryText !== undefined) {
+      writer.uint32(186).string(message.agentQueryText);
+    }
+    if (message.agentPlanJson !== undefined) {
+      writer.uint32(194).string(message.agentPlanJson);
+    }
+    if (message.agentStepsJson !== undefined) {
+      writer.uint32(202).string(message.agentStepsJson);
+    }
+    if (message.agentResultJson !== undefined) {
+      writer.uint32(210).string(message.agentResultJson);
+    }
+    if (message.agentErrorMessage !== undefined) {
+      writer.uint32(218).string(message.agentErrorMessage);
     }
     return writer;
   },
@@ -564,6 +754,62 @@ export const Memo: MessageFns<Memo> = {
           message.location = Location.decode(reader, reader.uint32());
           continue;
         }
+        case 21: {
+          if (tag !== 170) {
+            break;
+          }
+
+          message.agentTaskId = reader.string();
+          continue;
+        }
+        case 22: {
+          if (tag !== 176) {
+            break;
+          }
+
+          message.agentStatus = agentStatusFromJSON(reader.int32());
+          continue;
+        }
+        case 23: {
+          if (tag !== 186) {
+            break;
+          }
+
+          message.agentQueryText = reader.string();
+          continue;
+        }
+        case 24: {
+          if (tag !== 194) {
+            break;
+          }
+
+          message.agentPlanJson = reader.string();
+          continue;
+        }
+        case 25: {
+          if (tag !== 202) {
+            break;
+          }
+
+          message.agentStepsJson = reader.string();
+          continue;
+        }
+        case 26: {
+          if (tag !== 210) {
+            break;
+          }
+
+          message.agentResultJson = reader.string();
+          continue;
+        }
+        case 27: {
+          if (tag !== 218) {
+            break;
+          }
+
+          message.agentErrorMessage = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -600,6 +846,13 @@ export const Memo: MessageFns<Memo> = {
     message.location = (object.location !== undefined && object.location !== null)
       ? Location.fromPartial(object.location)
       : undefined;
+    message.agentTaskId = object.agentTaskId ?? undefined;
+    message.agentStatus = object.agentStatus ?? undefined;
+    message.agentQueryText = object.agentQueryText ?? undefined;
+    message.agentPlanJson = object.agentPlanJson ?? undefined;
+    message.agentStepsJson = object.agentStepsJson ?? undefined;
+    message.agentResultJson = object.agentResultJson ?? undefined;
+    message.agentErrorMessage = object.agentErrorMessage ?? undefined;
     return message;
   },
 };
@@ -2083,6 +2336,435 @@ export const DeleteMemoReactionRequest: MessageFns<DeleteMemoReactionRequest> = 
   },
 };
 
+function createBaseExecuteAgentOnMemoRequest(): ExecuteAgentOnMemoRequest {
+  return {
+    name: "",
+    queryText: undefined,
+    maxPlanIterations: undefined,
+    maxStepNum: undefined,
+    maxSearchResults: undefined,
+    autoAcceptedPlan: undefined,
+    interruptFeedback: undefined,
+    mcpSettingsOverride: {},
+    enableBackgroundInvestigation: undefined,
+  };
+}
+
+export const ExecuteAgentOnMemoRequest: MessageFns<ExecuteAgentOnMemoRequest> = {
+  encode(message: ExecuteAgentOnMemoRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.queryText !== undefined) {
+      writer.uint32(18).string(message.queryText);
+    }
+    if (message.maxPlanIterations !== undefined) {
+      writer.uint32(24).int32(message.maxPlanIterations);
+    }
+    if (message.maxStepNum !== undefined) {
+      writer.uint32(32).int32(message.maxStepNum);
+    }
+    if (message.maxSearchResults !== undefined) {
+      writer.uint32(40).int32(message.maxSearchResults);
+    }
+    if (message.autoAcceptedPlan !== undefined) {
+      writer.uint32(48).bool(message.autoAcceptedPlan);
+    }
+    if (message.interruptFeedback !== undefined) {
+      writer.uint32(58).string(message.interruptFeedback);
+    }
+    Object.entries(message.mcpSettingsOverride).forEach(([key, value]) => {
+      ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry.encode({ key: key as any, value }, writer.uint32(66).fork())
+        .join();
+    });
+    if (message.enableBackgroundInvestigation !== undefined) {
+      writer.uint32(72).bool(message.enableBackgroundInvestigation);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ExecuteAgentOnMemoRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseExecuteAgentOnMemoRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.name = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.queryText = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.maxPlanIterations = reader.int32();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.maxStepNum = reader.int32();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.maxSearchResults = reader.int32();
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.autoAcceptedPlan = reader.bool();
+          continue;
+        }
+        case 7: {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.interruptFeedback = reader.string();
+          continue;
+        }
+        case 8: {
+          if (tag !== 66) {
+            break;
+          }
+
+          const entry8 = ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry.decode(reader, reader.uint32());
+          if (entry8.value !== undefined) {
+            message.mcpSettingsOverride[entry8.key] = entry8.value;
+          }
+          continue;
+        }
+        case 9: {
+          if (tag !== 72) {
+            break;
+          }
+
+          message.enableBackgroundInvestigation = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<ExecuteAgentOnMemoRequest>): ExecuteAgentOnMemoRequest {
+    return ExecuteAgentOnMemoRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ExecuteAgentOnMemoRequest>): ExecuteAgentOnMemoRequest {
+    const message = createBaseExecuteAgentOnMemoRequest();
+    message.name = object.name ?? "";
+    message.queryText = object.queryText ?? undefined;
+    message.maxPlanIterations = object.maxPlanIterations ?? undefined;
+    message.maxStepNum = object.maxStepNum ?? undefined;
+    message.maxSearchResults = object.maxSearchResults ?? undefined;
+    message.autoAcceptedPlan = object.autoAcceptedPlan ?? undefined;
+    message.interruptFeedback = object.interruptFeedback ?? undefined;
+    message.mcpSettingsOverride = Object.entries(object.mcpSettingsOverride ?? {}).reduce<{ [key: string]: string }>(
+      (acc, [key, value]) => {
+        if (value !== undefined) {
+          acc[key] = globalThis.String(value);
+        }
+        return acc;
+      },
+      {},
+    );
+    message.enableBackgroundInvestigation = object.enableBackgroundInvestigation ?? undefined;
+    return message;
+  },
+};
+
+function createBaseExecuteAgentOnMemoRequest_McpSettingsOverrideEntry(): ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry {
+  return { key: "", value: "" };
+}
+
+export const ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry: MessageFns<
+  ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry
+> = {
+  encode(
+    message: ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry,
+    writer: BinaryWriter = new BinaryWriter(),
+  ): BinaryWriter {
+    if (message.key !== "") {
+      writer.uint32(10).string(message.key);
+    }
+    if (message.value !== "") {
+      writer.uint32(18).string(message.value);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseExecuteAgentOnMemoRequest_McpSettingsOverrideEntry();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.key = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.value = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(
+    base?: DeepPartial<ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry>,
+  ): ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry {
+    return ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry.fromPartial(base ?? {});
+  },
+  fromPartial(
+    object: DeepPartial<ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry>,
+  ): ExecuteAgentOnMemoRequest_McpSettingsOverrideEntry {
+    const message = createBaseExecuteAgentOnMemoRequest_McpSettingsOverrideEntry();
+    message.key = object.key ?? "";
+    message.value = object.value ?? "";
+    return message;
+  },
+};
+
+function createBaseStreamAgentTaskEventsRequest(): StreamAgentTaskEventsRequest {
+  return { agentTaskId: "" };
+}
+
+export const StreamAgentTaskEventsRequest: MessageFns<StreamAgentTaskEventsRequest> = {
+  encode(message: StreamAgentTaskEventsRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.agentTaskId !== "") {
+      writer.uint32(10).string(message.agentTaskId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): StreamAgentTaskEventsRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseStreamAgentTaskEventsRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.agentTaskId = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<StreamAgentTaskEventsRequest>): StreamAgentTaskEventsRequest {
+    return StreamAgentTaskEventsRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<StreamAgentTaskEventsRequest>): StreamAgentTaskEventsRequest {
+    const message = createBaseStreamAgentTaskEventsRequest();
+    message.agentTaskId = object.agentTaskId ?? "";
+    return message;
+  },
+};
+
+function createBaseAgentTaskEvent(): AgentTaskEvent {
+  return {
+    eventType: "",
+    dataJson: "",
+    timestamp: undefined,
+    isPartial: false,
+    isError: false,
+    errorMessage: undefined,
+    currentAgentStatus: undefined,
+    finishReason: undefined,
+    sourceEventId: undefined,
+  };
+}
+
+export const AgentTaskEvent: MessageFns<AgentTaskEvent> = {
+  encode(message: AgentTaskEvent, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.eventType !== "") {
+      writer.uint32(10).string(message.eventType);
+    }
+    if (message.dataJson !== "") {
+      writer.uint32(18).string(message.dataJson);
+    }
+    if (message.timestamp !== undefined) {
+      Timestamp.encode(toTimestamp(message.timestamp), writer.uint32(26).fork()).join();
+    }
+    if (message.isPartial !== false) {
+      writer.uint32(32).bool(message.isPartial);
+    }
+    if (message.isError !== false) {
+      writer.uint32(40).bool(message.isError);
+    }
+    if (message.errorMessage !== undefined) {
+      writer.uint32(50).string(message.errorMessage);
+    }
+    if (message.currentAgentStatus !== undefined) {
+      writer.uint32(56).int32(agentStatusToNumber(message.currentAgentStatus));
+    }
+    if (message.finishReason !== undefined) {
+      writer.uint32(66).string(message.finishReason);
+    }
+    if (message.sourceEventId !== undefined) {
+      writer.uint32(74).string(message.sourceEventId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): AgentTaskEvent {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseAgentTaskEvent();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.eventType = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.dataJson = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.timestamp = fromTimestamp(Timestamp.decode(reader, reader.uint32()));
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.isPartial = reader.bool();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.isError = reader.bool();
+          continue;
+        }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.errorMessage = reader.string();
+          continue;
+        }
+        case 7: {
+          if (tag !== 56) {
+            break;
+          }
+
+          message.currentAgentStatus = agentStatusFromJSON(reader.int32());
+          continue;
+        }
+        case 8: {
+          if (tag !== 66) {
+            break;
+          }
+
+          message.finishReason = reader.string();
+          continue;
+        }
+        case 9: {
+          if (tag !== 74) {
+            break;
+          }
+
+          message.sourceEventId = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<AgentTaskEvent>): AgentTaskEvent {
+    return AgentTaskEvent.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<AgentTaskEvent>): AgentTaskEvent {
+    const message = createBaseAgentTaskEvent();
+    message.eventType = object.eventType ?? "";
+    message.dataJson = object.dataJson ?? "";
+    message.timestamp = object.timestamp ?? undefined;
+    message.isPartial = object.isPartial ?? false;
+    message.isError = object.isError ?? false;
+    message.errorMessage = object.errorMessage ?? undefined;
+    message.currentAgentStatus = object.currentAgentStatus ?? undefined;
+    message.finishReason = object.finishReason ?? undefined;
+    message.sourceEventId = object.sourceEventId ?? undefined;
+    return message;
+  },
+};
+
 export type MemoServiceDefinition = typeof MemoServiceDefinition;
 export const MemoServiceDefinition = {
   name: "MemoService",
@@ -2910,6 +3592,125 @@ export const MemoServiceDefinition = {
               105,
               100,
               125,
+            ]),
+          ],
+        },
+      },
+    },
+    /** ExecuteAgentOnMemo triggers an agentic process on a memo. */
+    executeAgentOnMemo: {
+      name: "ExecuteAgentOnMemo",
+      requestType: ExecuteAgentOnMemoRequest,
+      requestStream: false,
+      responseType: Memo,
+      responseStream: false,
+      options: {
+        _unknownFields: {
+          8410: [new Uint8Array([4, 110, 97, 109, 101])],
+          578365826: [
+            new Uint8Array([
+              40,
+              58,
+              1,
+              42,
+              34,
+              35,
+              47,
+              97,
+              112,
+              105,
+              47,
+              118,
+              49,
+              47,
+              123,
+              110,
+              97,
+              109,
+              101,
+              61,
+              109,
+              101,
+              109,
+              111,
+              115,
+              47,
+              42,
+              125,
+              58,
+              101,
+              120,
+              101,
+              99,
+              117,
+              116,
+              101,
+              65,
+              103,
+              101,
+              110,
+              116,
+            ]),
+          ],
+        },
+      },
+    },
+    /** StreamAgentTaskEvents streams events for a specific agent task. */
+    streamAgentTaskEvents: {
+      name: "StreamAgentTaskEvents",
+      requestType: StreamAgentTaskEventsRequest,
+      requestStream: false,
+      responseType: AgentTaskEvent,
+      responseStream: true,
+      options: {
+        _unknownFields: {
+          8410: [new Uint8Array([13, 97, 103, 101, 110, 116, 95, 116, 97, 115, 107, 95, 105, 100])],
+          578365826: [
+            new Uint8Array([
+              43,
+              18,
+              41,
+              47,
+              97,
+              112,
+              105,
+              47,
+              118,
+              49,
+              47,
+              97,
+              103,
+              101,
+              110,
+              116,
+              84,
+              97,
+              115,
+              107,
+              115,
+              47,
+              123,
+              97,
+              103,
+              101,
+              110,
+              116,
+              95,
+              116,
+              97,
+              115,
+              107,
+              95,
+              105,
+              100,
+              125,
+              47,
+              101,
+              118,
+              101,
+              110,
+              116,
+              115,
             ]),
           ],
         },

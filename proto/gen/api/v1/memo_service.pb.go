@@ -77,6 +77,71 @@ func (Visibility) EnumDescriptor() ([]byte, []int) {
 	return file_api_v1_memo_service_proto_rawDescGZIP(), []int{0}
 }
 
+// Enum for Agentic Task Status
+type AgentStatus int32
+
+const (
+	AgentStatus_AGENT_STATUS_UNSPECIFIED AgentStatus = 0
+	AgentStatus_PENDING                  AgentStatus = 1 // 任務已創建，等待處理
+	AgentStatus_PLANNING                 AgentStatus = 2 // Agent 正在規劃中
+	AgentStatus_EXECUTING                AgentStatus = 3 // Agent 正在執行計劃步驟
+	AgentStatus_COMPLETED                AgentStatus = 4 // Agent 任務成功完成
+	AgentStatus_FAILED                   AgentStatus = 5 // Agent 任務執行失敗
+	AgentStatus_CANCELED                 AgentStatus = 6 // 任務被取消
+	AgentStatus_AGENT_STATUS_INTERRUPTED AgentStatus = 7 // Agent 任務被中斷，等待用戶反饋
+)
+
+// Enum value maps for AgentStatus.
+var (
+	AgentStatus_name = map[int32]string{
+		0: "AGENT_STATUS_UNSPECIFIED",
+		1: "PENDING",
+		2: "PLANNING",
+		3: "EXECUTING",
+		4: "COMPLETED",
+		5: "FAILED",
+		6: "CANCELED",
+		7: "AGENT_STATUS_INTERRUPTED",
+	}
+	AgentStatus_value = map[string]int32{
+		"AGENT_STATUS_UNSPECIFIED": 0,
+		"PENDING":                  1,
+		"PLANNING":                 2,
+		"EXECUTING":                3,
+		"COMPLETED":                4,
+		"FAILED":                   5,
+		"CANCELED":                 6,
+		"AGENT_STATUS_INTERRUPTED": 7,
+	}
+)
+
+func (x AgentStatus) Enum() *AgentStatus {
+	p := new(AgentStatus)
+	*p = x
+	return p
+}
+
+func (x AgentStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AgentStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_v1_memo_service_proto_enumTypes[1].Descriptor()
+}
+
+func (AgentStatus) Type() protoreflect.EnumType {
+	return &file_api_v1_memo_service_proto_enumTypes[1]
+}
+
+func (x AgentStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AgentStatus.Descriptor instead.
+func (AgentStatus) EnumDescriptor() ([]byte, []int) {
+	return file_api_v1_memo_service_proto_rawDescGZIP(), []int{1}
+}
+
 type MemoRelation_Type int32
 
 const (
@@ -110,11 +175,11 @@ func (x MemoRelation_Type) String() string {
 }
 
 func (MemoRelation_Type) Descriptor() protoreflect.EnumDescriptor {
-	return file_api_v1_memo_service_proto_enumTypes[1].Descriptor()
+	return file_api_v1_memo_service_proto_enumTypes[2].Descriptor()
 }
 
 func (MemoRelation_Type) Type() protoreflect.EnumType {
-	return &file_api_v1_memo_service_proto_enumTypes[1]
+	return &file_api_v1_memo_service_proto_enumTypes[2]
 }
 
 func (x MemoRelation_Type) Number() protoreflect.EnumNumber {
@@ -153,9 +218,17 @@ type Memo struct {
 	// The snippet of the memo content. Plain text only.
 	Snippet string `protobuf:"bytes,19,opt,name=snippet,proto3" json:"snippet,omitempty"`
 	// The location of the memo.
-	Location      *Location `protobuf:"bytes,20,opt,name=location,proto3,oneof" json:"location,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Location *Location `protobuf:"bytes,20,opt,name=location,proto3,oneof" json:"location,omitempty"`
+	// Agentic Feature Fields
+	AgentTaskId       *string      `protobuf:"bytes,21,opt,name=agent_task_id,json=agentTaskId,proto3,oneof" json:"agent_task_id,omitempty"`                              // Deer Flow task ID
+	AgentStatus       *AgentStatus `protobuf:"varint,22,opt,name=agent_status,json=agentStatus,proto3,enum=memos.api.v1.AgentStatus,oneof" json:"agent_status,omitempty"` // Status of the agentic task
+	AgentQueryText    *string      `protobuf:"bytes,23,opt,name=agent_query_text,json=agentQueryText,proto3,oneof" json:"agent_query_text,omitempty"`                     // Original query text for the agent
+	AgentPlanJson     *string      `protobuf:"bytes,24,opt,name=agent_plan_json,json=agentPlanJson,proto3,oneof" json:"agent_plan_json,omitempty"`                        // JSON string of the agent's plan
+	AgentStepsJson    *string      `protobuf:"bytes,25,opt,name=agent_steps_json,json=agentStepsJson,proto3,oneof" json:"agent_steps_json,omitempty"`                     // JSON string of the agent's execution steps
+	AgentResultJson   *string      `protobuf:"bytes,26,opt,name=agent_result_json,json=agentResultJson,proto3,oneof" json:"agent_result_json,omitempty"`                  // JSON string of the agent's final result
+	AgentErrorMessage *string      `protobuf:"bytes,27,opt,name=agent_error_message,json=agentErrorMessage,proto3,oneof" json:"agent_error_message,omitempty"`            // Error message if the agent task failed
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Memo) Reset() {
@@ -312,6 +385,55 @@ func (x *Memo) GetLocation() *Location {
 		return x.Location
 	}
 	return nil
+}
+
+func (x *Memo) GetAgentTaskId() string {
+	if x != nil && x.AgentTaskId != nil {
+		return *x.AgentTaskId
+	}
+	return ""
+}
+
+func (x *Memo) GetAgentStatus() AgentStatus {
+	if x != nil && x.AgentStatus != nil {
+		return *x.AgentStatus
+	}
+	return AgentStatus_AGENT_STATUS_UNSPECIFIED
+}
+
+func (x *Memo) GetAgentQueryText() string {
+	if x != nil && x.AgentQueryText != nil {
+		return *x.AgentQueryText
+	}
+	return ""
+}
+
+func (x *Memo) GetAgentPlanJson() string {
+	if x != nil && x.AgentPlanJson != nil {
+		return *x.AgentPlanJson
+	}
+	return ""
+}
+
+func (x *Memo) GetAgentStepsJson() string {
+	if x != nil && x.AgentStepsJson != nil {
+		return *x.AgentStepsJson
+	}
+	return ""
+}
+
+func (x *Memo) GetAgentResultJson() string {
+	if x != nil && x.AgentResultJson != nil {
+		return *x.AgentResultJson
+	}
+	return ""
+}
+
+func (x *Memo) GetAgentErrorMessage() string {
+	if x != nil && x.AgentErrorMessage != nil {
+		return *x.AgentErrorMessage
+	}
+	return ""
 }
 
 type Location struct {
@@ -1531,6 +1653,267 @@ func (x *DeleteMemoReactionRequest) GetId() int32 {
 	return 0
 }
 
+type ExecuteAgentOnMemoRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Name      string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	QueryText *string                `protobuf:"bytes,2,opt,name=query_text,json=queryText,proto3,oneof" json:"query_text,omitempty"` // Specific query for the agent, if different from memo content.
+	// Optional parameters to override DeerFlow defaults or Memos server-side defaults
+	MaxPlanIterations             *int32            `protobuf:"varint,3,opt,name=max_plan_iterations,json=maxPlanIterations,proto3,oneof" json:"max_plan_iterations,omitempty"`
+	MaxStepNum                    *int32            `protobuf:"varint,4,opt,name=max_step_num,json=maxStepNum,proto3,oneof" json:"max_step_num,omitempty"`
+	MaxSearchResults              *int32            `protobuf:"varint,5,opt,name=max_search_results,json=maxSearchResults,proto3,oneof" json:"max_search_results,omitempty"`
+	AutoAcceptedPlan              *bool             `protobuf:"varint,6,opt,name=auto_accepted_plan,json=autoAcceptedPlan,proto3,oneof" json:"auto_accepted_plan,omitempty"`
+	InterruptFeedback             *string           `protobuf:"bytes,7,opt,name=interrupt_feedback,json=interruptFeedback,proto3,oneof" json:"interrupt_feedback,omitempty"` // For resuming a previously interrupted task
+	McpSettingsOverride           map[string]string `protobuf:"bytes,8,rep,name=mcp_settings_override,json=mcpSettingsOverride,proto3" json:"mcp_settings_override,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	EnableBackgroundInvestigation *bool             `protobuf:"varint,9,opt,name=enable_background_investigation,json=enableBackgroundInvestigation,proto3,oneof" json:"enable_background_investigation,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
+}
+
+func (x *ExecuteAgentOnMemoRequest) Reset() {
+	*x = ExecuteAgentOnMemoRequest{}
+	mi := &file_api_v1_memo_service_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecuteAgentOnMemoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecuteAgentOnMemoRequest) ProtoMessage() {}
+
+func (x *ExecuteAgentOnMemoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_v1_memo_service_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecuteAgentOnMemoRequest.ProtoReflect.Descriptor instead.
+func (*ExecuteAgentOnMemoRequest) Descriptor() ([]byte, []int) {
+	return file_api_v1_memo_service_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ExecuteAgentOnMemoRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ExecuteAgentOnMemoRequest) GetQueryText() string {
+	if x != nil && x.QueryText != nil {
+		return *x.QueryText
+	}
+	return ""
+}
+
+func (x *ExecuteAgentOnMemoRequest) GetMaxPlanIterations() int32 {
+	if x != nil && x.MaxPlanIterations != nil {
+		return *x.MaxPlanIterations
+	}
+	return 0
+}
+
+func (x *ExecuteAgentOnMemoRequest) GetMaxStepNum() int32 {
+	if x != nil && x.MaxStepNum != nil {
+		return *x.MaxStepNum
+	}
+	return 0
+}
+
+func (x *ExecuteAgentOnMemoRequest) GetMaxSearchResults() int32 {
+	if x != nil && x.MaxSearchResults != nil {
+		return *x.MaxSearchResults
+	}
+	return 0
+}
+
+func (x *ExecuteAgentOnMemoRequest) GetAutoAcceptedPlan() bool {
+	if x != nil && x.AutoAcceptedPlan != nil {
+		return *x.AutoAcceptedPlan
+	}
+	return false
+}
+
+func (x *ExecuteAgentOnMemoRequest) GetInterruptFeedback() string {
+	if x != nil && x.InterruptFeedback != nil {
+		return *x.InterruptFeedback
+	}
+	return ""
+}
+
+func (x *ExecuteAgentOnMemoRequest) GetMcpSettingsOverride() map[string]string {
+	if x != nil {
+		return x.McpSettingsOverride
+	}
+	return nil
+}
+
+func (x *ExecuteAgentOnMemoRequest) GetEnableBackgroundInvestigation() bool {
+	if x != nil && x.EnableBackgroundInvestigation != nil {
+		return *x.EnableBackgroundInvestigation
+	}
+	return false
+}
+
+type StreamAgentTaskEventsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentTaskId   string                 `protobuf:"bytes,1,opt,name=agent_task_id,json=agentTaskId,proto3" json:"agent_task_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StreamAgentTaskEventsRequest) Reset() {
+	*x = StreamAgentTaskEventsRequest{}
+	mi := &file_api_v1_memo_service_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StreamAgentTaskEventsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StreamAgentTaskEventsRequest) ProtoMessage() {}
+
+func (x *StreamAgentTaskEventsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_v1_memo_service_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StreamAgentTaskEventsRequest.ProtoReflect.Descriptor instead.
+func (*StreamAgentTaskEventsRequest) Descriptor() ([]byte, []int) {
+	return file_api_v1_memo_service_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *StreamAgentTaskEventsRequest) GetAgentTaskId() string {
+	if x != nil {
+		return x.AgentTaskId
+	}
+	return ""
+}
+
+type AgentTaskEvent struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	EventType          string                 `protobuf:"bytes,1,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`                                                                   // e.g., "message_chunk", "interrupt", "status_update", "final_result", "error"
+	DataJson           string                 `protobuf:"bytes,2,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`                                                                      // The JSON payload of the event from DeerFlow, or a Memos-defined structure
+	Timestamp          *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`                                                                                    // When Memos processed/relayed this event
+	IsPartial          bool                   `protobuf:"varint,4,opt,name=is_partial,json=isPartial,proto3" json:"is_partial,omitempty"`                                                                  // True if this event represents a piece of a larger message (e.g., a message_chunk)
+	IsError            bool                   `protobuf:"varint,5,opt,name=is_error,json=isError,proto3" json:"is_error,omitempty"`                                                                        // True if this event specifically represents an error condition
+	ErrorMessage       *string                `protobuf:"bytes,6,opt,name=error_message,json=errorMessage,proto3,oneof" json:"error_message,omitempty"`                                                    // Detailed error message if is_error is true
+	CurrentAgentStatus *AgentStatus           `protobuf:"varint,7,opt,name=current_agent_status,json=currentAgentStatus,proto3,enum=memos.api.v1.AgentStatus,oneof" json:"current_agent_status,omitempty"` // The overall status of the agent task as understood by Memos after this event
+	FinishReason       *string                `protobuf:"bytes,8,opt,name=finish_reason,json=finishReason,proto3,oneof" json:"finish_reason,omitempty"`                                                    // If applicable (e.g. from a message_chunk), the reason the agent/stream finished
+	SourceEventId      *string                `protobuf:"bytes,9,opt,name=source_event_id,json=sourceEventId,proto3,oneof" json:"source_event_id,omitempty"`                                               // Optional: ID of the original event from DeerFlow if available (e.g. SSE 'id' field)
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *AgentTaskEvent) Reset() {
+	*x = AgentTaskEvent{}
+	mi := &file_api_v1_memo_service_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentTaskEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentTaskEvent) ProtoMessage() {}
+
+func (x *AgentTaskEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_api_v1_memo_service_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentTaskEvent.ProtoReflect.Descriptor instead.
+func (*AgentTaskEvent) Descriptor() ([]byte, []int) {
+	return file_api_v1_memo_service_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *AgentTaskEvent) GetEventType() string {
+	if x != nil {
+		return x.EventType
+	}
+	return ""
+}
+
+func (x *AgentTaskEvent) GetDataJson() string {
+	if x != nil {
+		return x.DataJson
+	}
+	return ""
+}
+
+func (x *AgentTaskEvent) GetTimestamp() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Timestamp
+	}
+	return nil
+}
+
+func (x *AgentTaskEvent) GetIsPartial() bool {
+	if x != nil {
+		return x.IsPartial
+	}
+	return false
+}
+
+func (x *AgentTaskEvent) GetIsError() bool {
+	if x != nil {
+		return x.IsError
+	}
+	return false
+}
+
+func (x *AgentTaskEvent) GetErrorMessage() string {
+	if x != nil && x.ErrorMessage != nil {
+		return *x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *AgentTaskEvent) GetCurrentAgentStatus() AgentStatus {
+	if x != nil && x.CurrentAgentStatus != nil {
+		return *x.CurrentAgentStatus
+	}
+	return AgentStatus_AGENT_STATUS_UNSPECIFIED
+}
+
+func (x *AgentTaskEvent) GetFinishReason() string {
+	if x != nil && x.FinishReason != nil {
+		return *x.FinishReason
+	}
+	return ""
+}
+
+func (x *AgentTaskEvent) GetSourceEventId() string {
+	if x != nil && x.SourceEventId != nil {
+		return *x.SourceEventId
+	}
+	return ""
+}
+
 type Memo_Property struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	HasLink            bool                   `protobuf:"varint,1,opt,name=has_link,json=hasLink,proto3" json:"has_link,omitempty"`
@@ -1543,7 +1926,7 @@ type Memo_Property struct {
 
 func (x *Memo_Property) Reset() {
 	*x = Memo_Property{}
-	mi := &file_api_v1_memo_service_proto_msgTypes[24]
+	mi := &file_api_v1_memo_service_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1555,7 +1938,7 @@ func (x *Memo_Property) String() string {
 func (*Memo_Property) ProtoMessage() {}
 
 func (x *Memo_Property) ProtoReflect() protoreflect.Message {
-	mi := &file_api_v1_memo_service_proto_msgTypes[24]
+	mi := &file_api_v1_memo_service_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1613,7 +1996,7 @@ type MemoRelation_Memo struct {
 
 func (x *MemoRelation_Memo) Reset() {
 	*x = MemoRelation_Memo{}
-	mi := &file_api_v1_memo_service_proto_msgTypes[25]
+	mi := &file_api_v1_memo_service_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1625,7 +2008,7 @@ func (x *MemoRelation_Memo) String() string {
 func (*MemoRelation_Memo) ProtoMessage() {}
 
 func (x *MemoRelation_Memo) ProtoReflect() protoreflect.Message {
-	mi := &file_api_v1_memo_service_proto_msgTypes[25]
+	mi := &file_api_v1_memo_service_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1666,7 +2049,7 @@ var File_api_v1_memo_service_proto protoreflect.FileDescriptor
 
 const file_api_v1_memo_service_proto_rawDesc = "" +
 	"\n" +
-	"\x19api/v1/memo_service.proto\x12\fmemos.api.v1\x1a\x13api/v1/common.proto\x1a\x1dapi/v1/markdown_service.proto\x1a\x1dapi/v1/reaction_service.proto\x1a\x1dapi/v1/resource_service.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x17google/api/client.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a google/protobuf/field_mask.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xee\a\n" +
+	"\x19api/v1/memo_service.proto\x12\fmemos.api.v1\x1a\x13api/v1/common.proto\x1a\x1dapi/v1/markdown_service.proto\x1a\x1dapi/v1/reaction_service.proto\x1a\x1dapi/v1/resource_service.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x17google/api/client.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a\x19google/api/resource.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a google/protobuf/field_mask.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xda\v\n" +
 	"\x04Memo\x12\x1a\n" +
 	"\x04name\x18\x01 \x01(\tB\x06\xe0A\x03\xe0A\bR\x04name\x12)\n" +
 	"\x05state\x18\x03 \x01(\x0e2\x13.memos.api.v1.StateR\x05state\x12\x18\n" +
@@ -1690,14 +2073,28 @@ const file_api_v1_memo_service_proto_rawDesc = "" +
 	"\bproperty\x18\x11 \x01(\v2\x1b.memos.api.v1.Memo.PropertyB\x03\xe0A\x03R\bproperty\x12 \n" +
 	"\x06parent\x18\x12 \x01(\tB\x03\xe0A\x03H\x00R\x06parent\x88\x01\x01\x12\x1d\n" +
 	"\asnippet\x18\x13 \x01(\tB\x03\xe0A\x03R\asnippet\x127\n" +
-	"\blocation\x18\x14 \x01(\v2\x16.memos.api.v1.LocationH\x01R\blocation\x88\x01\x01\x1a\x96\x01\n" +
+	"\blocation\x18\x14 \x01(\v2\x16.memos.api.v1.LocationH\x01R\blocation\x88\x01\x01\x12'\n" +
+	"\ragent_task_id\x18\x15 \x01(\tH\x02R\vagentTaskId\x88\x01\x01\x12A\n" +
+	"\fagent_status\x18\x16 \x01(\x0e2\x19.memos.api.v1.AgentStatusH\x03R\vagentStatus\x88\x01\x01\x12-\n" +
+	"\x10agent_query_text\x18\x17 \x01(\tH\x04R\x0eagentQueryText\x88\x01\x01\x12+\n" +
+	"\x0fagent_plan_json\x18\x18 \x01(\tH\x05R\ragentPlanJson\x88\x01\x01\x12-\n" +
+	"\x10agent_steps_json\x18\x19 \x01(\tH\x06R\x0eagentStepsJson\x88\x01\x01\x12/\n" +
+	"\x11agent_result_json\x18\x1a \x01(\tH\aR\x0fagentResultJson\x88\x01\x01\x123\n" +
+	"\x13agent_error_message\x18\x1b \x01(\tH\bR\x11agentErrorMessage\x88\x01\x01\x1a\x96\x01\n" +
 	"\bProperty\x12\x19\n" +
 	"\bhas_link\x18\x01 \x01(\bR\ahasLink\x12\"\n" +
 	"\rhas_task_list\x18\x02 \x01(\bR\vhasTaskList\x12\x19\n" +
 	"\bhas_code\x18\x03 \x01(\bR\ahasCode\x120\n" +
 	"\x14has_incomplete_tasks\x18\x04 \x01(\bR\x12hasIncompleteTasksB\t\n" +
 	"\a_parentB\v\n" +
-	"\t_locationJ\x04\b\x02\x10\x03\"f\n" +
+	"\t_locationB\x10\n" +
+	"\x0e_agent_task_idB\x0f\n" +
+	"\r_agent_statusB\x13\n" +
+	"\x11_agent_query_textB\x12\n" +
+	"\x10_agent_plan_jsonB\x13\n" +
+	"\x11_agent_steps_jsonB\x14\n" +
+	"\x12_agent_result_jsonB\x16\n" +
+	"\x14_agent_error_messageJ\x04\b\x02\x10\x03\"f\n" +
 	"\bLocation\x12 \n" +
 	"\vplaceholder\x18\x01 \x01(\tR\vplaceholder\x12\x1a\n" +
 	"\blatitude\x18\x02 \x01(\x01R\blatitude\x12\x1c\n" +
@@ -1775,14 +2172,65 @@ const file_api_v1_memo_service_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x122\n" +
 	"\breaction\x18\x02 \x01(\v2\x16.memos.api.v1.ReactionR\breaction\"+\n" +
 	"\x19DeleteMemoReactionRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x05R\x02id*P\n" +
+	"\x02id\x18\x01 \x01(\x05R\x02id\"\x90\x06\n" +
+	"\x19ExecuteAgentOnMemoRequest\x12-\n" +
+	"\x04name\x18\x01 \x01(\tB\x19\xe0A\x02\xfaA\x13\n" +
+	"\x11memos.api.v1.MemoR\x04name\x12\"\n" +
+	"\n" +
+	"query_text\x18\x02 \x01(\tH\x00R\tqueryText\x88\x01\x01\x123\n" +
+	"\x13max_plan_iterations\x18\x03 \x01(\x05H\x01R\x11maxPlanIterations\x88\x01\x01\x12%\n" +
+	"\fmax_step_num\x18\x04 \x01(\x05H\x02R\n" +
+	"maxStepNum\x88\x01\x01\x121\n" +
+	"\x12max_search_results\x18\x05 \x01(\x05H\x03R\x10maxSearchResults\x88\x01\x01\x121\n" +
+	"\x12auto_accepted_plan\x18\x06 \x01(\bH\x04R\x10autoAcceptedPlan\x88\x01\x01\x122\n" +
+	"\x12interrupt_feedback\x18\a \x01(\tH\x05R\x11interruptFeedback\x88\x01\x01\x12t\n" +
+	"\x15mcp_settings_override\x18\b \x03(\v2@.memos.api.v1.ExecuteAgentOnMemoRequest.McpSettingsOverrideEntryR\x13mcpSettingsOverride\x12K\n" +
+	"\x1fenable_background_investigation\x18\t \x01(\bH\x06R\x1denableBackgroundInvestigation\x88\x01\x01\x1aF\n" +
+	"\x18McpSettingsOverrideEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\r\n" +
+	"\v_query_textB\x16\n" +
+	"\x14_max_plan_iterationsB\x0f\n" +
+	"\r_max_step_numB\x15\n" +
+	"\x13_max_search_resultsB\x15\n" +
+	"\x13_auto_accepted_planB\x15\n" +
+	"\x13_interrupt_feedbackB\"\n" +
+	" _enable_background_investigation\"G\n" +
+	"\x1cStreamAgentTaskEventsRequest\x12'\n" +
+	"\ragent_task_id\x18\x01 \x01(\tB\x03\xe0A\x02R\vagentTaskId\"\xe4\x03\n" +
+	"\x0eAgentTaskEvent\x12\x1d\n" +
+	"\n" +
+	"event_type\x18\x01 \x01(\tR\teventType\x12\x1b\n" +
+	"\tdata_json\x18\x02 \x01(\tR\bdataJson\x128\n" +
+	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x1d\n" +
+	"\n" +
+	"is_partial\x18\x04 \x01(\bR\tisPartial\x12\x19\n" +
+	"\bis_error\x18\x05 \x01(\bR\aisError\x12(\n" +
+	"\rerror_message\x18\x06 \x01(\tH\x00R\ferrorMessage\x88\x01\x01\x12P\n" +
+	"\x14current_agent_status\x18\a \x01(\x0e2\x19.memos.api.v1.AgentStatusH\x01R\x12currentAgentStatus\x88\x01\x01\x12(\n" +
+	"\rfinish_reason\x18\b \x01(\tH\x02R\ffinishReason\x88\x01\x01\x12+\n" +
+	"\x0fsource_event_id\x18\t \x01(\tH\x03R\rsourceEventId\x88\x01\x01B\x10\n" +
+	"\x0e_error_messageB\x17\n" +
+	"\x15_current_agent_statusB\x10\n" +
+	"\x0e_finish_reasonB\x12\n" +
+	"\x10_source_event_id*P\n" +
 	"\n" +
 	"Visibility\x12\x1a\n" +
 	"\x16VISIBILITY_UNSPECIFIED\x10\x00\x12\v\n" +
 	"\aPRIVATE\x10\x01\x12\r\n" +
 	"\tPROTECTED\x10\x02\x12\n" +
 	"\n" +
-	"\x06PUBLIC\x10\x032\xbf\x10\n" +
+	"\x06PUBLIC\x10\x03*\x9c\x01\n" +
+	"\vAgentStatus\x12\x1c\n" +
+	"\x18AGENT_STATUS_UNSPECIFIED\x10\x00\x12\v\n" +
+	"\aPENDING\x10\x01\x12\f\n" +
+	"\bPLANNING\x10\x02\x12\r\n" +
+	"\tEXECUTING\x10\x03\x12\r\n" +
+	"\tCOMPLETED\x10\x04\x12\n" +
+	"\n" +
+	"\x06FAILED\x10\x05\x12\f\n" +
+	"\bCANCELED\x10\x06\x12\x1c\n" +
+	"\x18AGENT_STATUS_INTERRUPTED\x10\a2\xf3\x12\n" +
 	"\vMemoService\x12^\n" +
 	"\n" +
 	"CreateMemo\x12\x1f.memos.api.v1.CreateMemoRequest\x1a\x12.memos.api.v1.Memo\"\x1b\x82\xd3\xe4\x93\x02\x15:\x04memo\"\r/api/v1/memos\x12\x85\x01\n" +
@@ -1802,7 +2250,9 @@ const file_api_v1_memo_service_proto_rawDesc = "" +
 	"\x10ListMemoComments\x12%.memos.api.v1.ListMemoCommentsRequest\x1a&.memos.api.v1.ListMemoCommentsResponse\".\xdaA\x04name\x82\xd3\xe4\x93\x02!\x12\x1f/api/v1/{name=memos/*}/comments\x12\x95\x01\n" +
 	"\x11ListMemoReactions\x12&.memos.api.v1.ListMemoReactionsRequest\x1a'.memos.api.v1.ListMemoReactionsResponse\"/\xdaA\x04name\x82\xd3\xe4\x93\x02\"\x12 /api/v1/{name=memos/*}/reactions\x12\x89\x01\n" +
 	"\x12UpsertMemoReaction\x12'.memos.api.v1.UpsertMemoReactionRequest\x1a\x16.memos.api.v1.Reaction\"2\xdaA\x04name\x82\xd3\xe4\x93\x02%:\x01*\" /api/v1/{name=memos/*}/reactions\x12z\n" +
-	"\x12DeleteMemoReaction\x12'.memos.api.v1.DeleteMemoReactionRequest\x1a\x16.google.protobuf.Empty\"#\xdaA\x02id\x82\xd3\xe4\x93\x02\x18*\x16/api/v1/reactions/{id}B\xa8\x01\n" +
+	"\x12DeleteMemoReaction\x12'.memos.api.v1.DeleteMemoReactionRequest\x1a\x16.google.protobuf.Empty\"#\xdaA\x02id\x82\xd3\xe4\x93\x02\x18*\x16/api/v1/reactions/{id}\x12\x88\x01\n" +
+	"\x12ExecuteAgentOnMemo\x12'.memos.api.v1.ExecuteAgentOnMemoRequest\x1a\x12.memos.api.v1.Memo\"5\xdaA\x04name\x82\xd3\xe4\x93\x02(:\x01*\"#/api/v1/{name=memos/*}:executeAgent\x12\xa6\x01\n" +
+	"\x15StreamAgentTaskEvents\x12*.memos.api.v1.StreamAgentTaskEventsRequest\x1a\x1c.memos.api.v1.AgentTaskEvent\"A\xdaA\ragent_task_id\x82\xd3\xe4\x93\x02+\x12)/api/v1/agentTasks/{agent_task_id}/events0\x01B\xa8\x01\n" +
 	"\x10com.memos.api.v1B\x10MemoServiceProtoP\x01Z0github.com/usememos/memos/proto/gen/api/v1;apiv1\xa2\x02\x03MAX\xaa\x02\fMemos.Api.V1\xca\x02\fMemos\\Api\\V1\xe2\x02\x18Memos\\Api\\V1\\GPBMetadata\xea\x02\x0eMemos::Api::V1b\x06proto3"
 
 var (
@@ -1817,112 +2267,125 @@ func file_api_v1_memo_service_proto_rawDescGZIP() []byte {
 	return file_api_v1_memo_service_proto_rawDescData
 }
 
-var file_api_v1_memo_service_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_api_v1_memo_service_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_api_v1_memo_service_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_api_v1_memo_service_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_api_v1_memo_service_proto_goTypes = []any{
-	(Visibility)(0),                   // 0: memos.api.v1.Visibility
-	(MemoRelation_Type)(0),            // 1: memos.api.v1.MemoRelation.Type
-	(*Memo)(nil),                      // 2: memos.api.v1.Memo
-	(*Location)(nil),                  // 3: memos.api.v1.Location
-	(*CreateMemoRequest)(nil),         // 4: memos.api.v1.CreateMemoRequest
-	(*ListMemosRequest)(nil),          // 5: memos.api.v1.ListMemosRequest
-	(*ListMemosResponse)(nil),         // 6: memos.api.v1.ListMemosResponse
-	(*GetMemoRequest)(nil),            // 7: memos.api.v1.GetMemoRequest
-	(*UpdateMemoRequest)(nil),         // 8: memos.api.v1.UpdateMemoRequest
-	(*DeleteMemoRequest)(nil),         // 9: memos.api.v1.DeleteMemoRequest
-	(*RenameMemoTagRequest)(nil),      // 10: memos.api.v1.RenameMemoTagRequest
-	(*DeleteMemoTagRequest)(nil),      // 11: memos.api.v1.DeleteMemoTagRequest
-	(*SetMemoResourcesRequest)(nil),   // 12: memos.api.v1.SetMemoResourcesRequest
-	(*ListMemoResourcesRequest)(nil),  // 13: memos.api.v1.ListMemoResourcesRequest
-	(*ListMemoResourcesResponse)(nil), // 14: memos.api.v1.ListMemoResourcesResponse
-	(*MemoRelation)(nil),              // 15: memos.api.v1.MemoRelation
-	(*SetMemoRelationsRequest)(nil),   // 16: memos.api.v1.SetMemoRelationsRequest
-	(*ListMemoRelationsRequest)(nil),  // 17: memos.api.v1.ListMemoRelationsRequest
-	(*ListMemoRelationsResponse)(nil), // 18: memos.api.v1.ListMemoRelationsResponse
-	(*CreateMemoCommentRequest)(nil),  // 19: memos.api.v1.CreateMemoCommentRequest
-	(*ListMemoCommentsRequest)(nil),   // 20: memos.api.v1.ListMemoCommentsRequest
-	(*ListMemoCommentsResponse)(nil),  // 21: memos.api.v1.ListMemoCommentsResponse
-	(*ListMemoReactionsRequest)(nil),  // 22: memos.api.v1.ListMemoReactionsRequest
-	(*ListMemoReactionsResponse)(nil), // 23: memos.api.v1.ListMemoReactionsResponse
-	(*UpsertMemoReactionRequest)(nil), // 24: memos.api.v1.UpsertMemoReactionRequest
-	(*DeleteMemoReactionRequest)(nil), // 25: memos.api.v1.DeleteMemoReactionRequest
-	(*Memo_Property)(nil),             // 26: memos.api.v1.Memo.Property
-	(*MemoRelation_Memo)(nil),         // 27: memos.api.v1.MemoRelation.Memo
-	(State)(0),                        // 28: memos.api.v1.State
-	(*timestamppb.Timestamp)(nil),     // 29: google.protobuf.Timestamp
-	(*Node)(nil),                      // 30: memos.api.v1.Node
-	(*Resource)(nil),                  // 31: memos.api.v1.Resource
-	(*Reaction)(nil),                  // 32: memos.api.v1.Reaction
-	(Direction)(0),                    // 33: memos.api.v1.Direction
-	(*fieldmaskpb.FieldMask)(nil),     // 34: google.protobuf.FieldMask
-	(*emptypb.Empty)(nil),             // 35: google.protobuf.Empty
+	(Visibility)(0),                      // 0: memos.api.v1.Visibility
+	(AgentStatus)(0),                     // 1: memos.api.v1.AgentStatus
+	(MemoRelation_Type)(0),               // 2: memos.api.v1.MemoRelation.Type
+	(*Memo)(nil),                         // 3: memos.api.v1.Memo
+	(*Location)(nil),                     // 4: memos.api.v1.Location
+	(*CreateMemoRequest)(nil),            // 5: memos.api.v1.CreateMemoRequest
+	(*ListMemosRequest)(nil),             // 6: memos.api.v1.ListMemosRequest
+	(*ListMemosResponse)(nil),            // 7: memos.api.v1.ListMemosResponse
+	(*GetMemoRequest)(nil),               // 8: memos.api.v1.GetMemoRequest
+	(*UpdateMemoRequest)(nil),            // 9: memos.api.v1.UpdateMemoRequest
+	(*DeleteMemoRequest)(nil),            // 10: memos.api.v1.DeleteMemoRequest
+	(*RenameMemoTagRequest)(nil),         // 11: memos.api.v1.RenameMemoTagRequest
+	(*DeleteMemoTagRequest)(nil),         // 12: memos.api.v1.DeleteMemoTagRequest
+	(*SetMemoResourcesRequest)(nil),      // 13: memos.api.v1.SetMemoResourcesRequest
+	(*ListMemoResourcesRequest)(nil),     // 14: memos.api.v1.ListMemoResourcesRequest
+	(*ListMemoResourcesResponse)(nil),    // 15: memos.api.v1.ListMemoResourcesResponse
+	(*MemoRelation)(nil),                 // 16: memos.api.v1.MemoRelation
+	(*SetMemoRelationsRequest)(nil),      // 17: memos.api.v1.SetMemoRelationsRequest
+	(*ListMemoRelationsRequest)(nil),     // 18: memos.api.v1.ListMemoRelationsRequest
+	(*ListMemoRelationsResponse)(nil),    // 19: memos.api.v1.ListMemoRelationsResponse
+	(*CreateMemoCommentRequest)(nil),     // 20: memos.api.v1.CreateMemoCommentRequest
+	(*ListMemoCommentsRequest)(nil),      // 21: memos.api.v1.ListMemoCommentsRequest
+	(*ListMemoCommentsResponse)(nil),     // 22: memos.api.v1.ListMemoCommentsResponse
+	(*ListMemoReactionsRequest)(nil),     // 23: memos.api.v1.ListMemoReactionsRequest
+	(*ListMemoReactionsResponse)(nil),    // 24: memos.api.v1.ListMemoReactionsResponse
+	(*UpsertMemoReactionRequest)(nil),    // 25: memos.api.v1.UpsertMemoReactionRequest
+	(*DeleteMemoReactionRequest)(nil),    // 26: memos.api.v1.DeleteMemoReactionRequest
+	(*ExecuteAgentOnMemoRequest)(nil),    // 27: memos.api.v1.ExecuteAgentOnMemoRequest
+	(*StreamAgentTaskEventsRequest)(nil), // 28: memos.api.v1.StreamAgentTaskEventsRequest
+	(*AgentTaskEvent)(nil),               // 29: memos.api.v1.AgentTaskEvent
+	(*Memo_Property)(nil),                // 30: memos.api.v1.Memo.Property
+	(*MemoRelation_Memo)(nil),            // 31: memos.api.v1.MemoRelation.Memo
+	nil,                                  // 32: memos.api.v1.ExecuteAgentOnMemoRequest.McpSettingsOverrideEntry
+	(State)(0),                           // 33: memos.api.v1.State
+	(*timestamppb.Timestamp)(nil),        // 34: google.protobuf.Timestamp
+	(*Node)(nil),                         // 35: memos.api.v1.Node
+	(*Resource)(nil),                     // 36: memos.api.v1.Resource
+	(*Reaction)(nil),                     // 37: memos.api.v1.Reaction
+	(Direction)(0),                       // 38: memos.api.v1.Direction
+	(*fieldmaskpb.FieldMask)(nil),        // 39: google.protobuf.FieldMask
+	(*emptypb.Empty)(nil),                // 40: google.protobuf.Empty
 }
 var file_api_v1_memo_service_proto_depIdxs = []int32{
-	28, // 0: memos.api.v1.Memo.state:type_name -> memos.api.v1.State
-	29, // 1: memos.api.v1.Memo.create_time:type_name -> google.protobuf.Timestamp
-	29, // 2: memos.api.v1.Memo.update_time:type_name -> google.protobuf.Timestamp
-	29, // 3: memos.api.v1.Memo.display_time:type_name -> google.protobuf.Timestamp
-	30, // 4: memos.api.v1.Memo.nodes:type_name -> memos.api.v1.Node
+	33, // 0: memos.api.v1.Memo.state:type_name -> memos.api.v1.State
+	34, // 1: memos.api.v1.Memo.create_time:type_name -> google.protobuf.Timestamp
+	34, // 2: memos.api.v1.Memo.update_time:type_name -> google.protobuf.Timestamp
+	34, // 3: memos.api.v1.Memo.display_time:type_name -> google.protobuf.Timestamp
+	35, // 4: memos.api.v1.Memo.nodes:type_name -> memos.api.v1.Node
 	0,  // 5: memos.api.v1.Memo.visibility:type_name -> memos.api.v1.Visibility
-	31, // 6: memos.api.v1.Memo.resources:type_name -> memos.api.v1.Resource
-	15, // 7: memos.api.v1.Memo.relations:type_name -> memos.api.v1.MemoRelation
-	32, // 8: memos.api.v1.Memo.reactions:type_name -> memos.api.v1.Reaction
-	26, // 9: memos.api.v1.Memo.property:type_name -> memos.api.v1.Memo.Property
-	3,  // 10: memos.api.v1.Memo.location:type_name -> memos.api.v1.Location
-	2,  // 11: memos.api.v1.CreateMemoRequest.memo:type_name -> memos.api.v1.Memo
-	28, // 12: memos.api.v1.ListMemosRequest.state:type_name -> memos.api.v1.State
-	33, // 13: memos.api.v1.ListMemosRequest.direction:type_name -> memos.api.v1.Direction
-	2,  // 14: memos.api.v1.ListMemosResponse.memos:type_name -> memos.api.v1.Memo
-	2,  // 15: memos.api.v1.UpdateMemoRequest.memo:type_name -> memos.api.v1.Memo
-	34, // 16: memos.api.v1.UpdateMemoRequest.update_mask:type_name -> google.protobuf.FieldMask
-	31, // 17: memos.api.v1.SetMemoResourcesRequest.resources:type_name -> memos.api.v1.Resource
-	31, // 18: memos.api.v1.ListMemoResourcesResponse.resources:type_name -> memos.api.v1.Resource
-	27, // 19: memos.api.v1.MemoRelation.memo:type_name -> memos.api.v1.MemoRelation.Memo
-	27, // 20: memos.api.v1.MemoRelation.related_memo:type_name -> memos.api.v1.MemoRelation.Memo
-	1,  // 21: memos.api.v1.MemoRelation.type:type_name -> memos.api.v1.MemoRelation.Type
-	15, // 22: memos.api.v1.SetMemoRelationsRequest.relations:type_name -> memos.api.v1.MemoRelation
-	15, // 23: memos.api.v1.ListMemoRelationsResponse.relations:type_name -> memos.api.v1.MemoRelation
-	2,  // 24: memos.api.v1.CreateMemoCommentRequest.comment:type_name -> memos.api.v1.Memo
-	2,  // 25: memos.api.v1.ListMemoCommentsResponse.memos:type_name -> memos.api.v1.Memo
-	32, // 26: memos.api.v1.ListMemoReactionsResponse.reactions:type_name -> memos.api.v1.Reaction
-	32, // 27: memos.api.v1.UpsertMemoReactionRequest.reaction:type_name -> memos.api.v1.Reaction
-	4,  // 28: memos.api.v1.MemoService.CreateMemo:input_type -> memos.api.v1.CreateMemoRequest
-	5,  // 29: memos.api.v1.MemoService.ListMemos:input_type -> memos.api.v1.ListMemosRequest
-	7,  // 30: memos.api.v1.MemoService.GetMemo:input_type -> memos.api.v1.GetMemoRequest
-	8,  // 31: memos.api.v1.MemoService.UpdateMemo:input_type -> memos.api.v1.UpdateMemoRequest
-	9,  // 32: memos.api.v1.MemoService.DeleteMemo:input_type -> memos.api.v1.DeleteMemoRequest
-	10, // 33: memos.api.v1.MemoService.RenameMemoTag:input_type -> memos.api.v1.RenameMemoTagRequest
-	11, // 34: memos.api.v1.MemoService.DeleteMemoTag:input_type -> memos.api.v1.DeleteMemoTagRequest
-	12, // 35: memos.api.v1.MemoService.SetMemoResources:input_type -> memos.api.v1.SetMemoResourcesRequest
-	13, // 36: memos.api.v1.MemoService.ListMemoResources:input_type -> memos.api.v1.ListMemoResourcesRequest
-	16, // 37: memos.api.v1.MemoService.SetMemoRelations:input_type -> memos.api.v1.SetMemoRelationsRequest
-	17, // 38: memos.api.v1.MemoService.ListMemoRelations:input_type -> memos.api.v1.ListMemoRelationsRequest
-	19, // 39: memos.api.v1.MemoService.CreateMemoComment:input_type -> memos.api.v1.CreateMemoCommentRequest
-	20, // 40: memos.api.v1.MemoService.ListMemoComments:input_type -> memos.api.v1.ListMemoCommentsRequest
-	22, // 41: memos.api.v1.MemoService.ListMemoReactions:input_type -> memos.api.v1.ListMemoReactionsRequest
-	24, // 42: memos.api.v1.MemoService.UpsertMemoReaction:input_type -> memos.api.v1.UpsertMemoReactionRequest
-	25, // 43: memos.api.v1.MemoService.DeleteMemoReaction:input_type -> memos.api.v1.DeleteMemoReactionRequest
-	2,  // 44: memos.api.v1.MemoService.CreateMemo:output_type -> memos.api.v1.Memo
-	6,  // 45: memos.api.v1.MemoService.ListMemos:output_type -> memos.api.v1.ListMemosResponse
-	2,  // 46: memos.api.v1.MemoService.GetMemo:output_type -> memos.api.v1.Memo
-	2,  // 47: memos.api.v1.MemoService.UpdateMemo:output_type -> memos.api.v1.Memo
-	35, // 48: memos.api.v1.MemoService.DeleteMemo:output_type -> google.protobuf.Empty
-	35, // 49: memos.api.v1.MemoService.RenameMemoTag:output_type -> google.protobuf.Empty
-	35, // 50: memos.api.v1.MemoService.DeleteMemoTag:output_type -> google.protobuf.Empty
-	35, // 51: memos.api.v1.MemoService.SetMemoResources:output_type -> google.protobuf.Empty
-	14, // 52: memos.api.v1.MemoService.ListMemoResources:output_type -> memos.api.v1.ListMemoResourcesResponse
-	35, // 53: memos.api.v1.MemoService.SetMemoRelations:output_type -> google.protobuf.Empty
-	18, // 54: memos.api.v1.MemoService.ListMemoRelations:output_type -> memos.api.v1.ListMemoRelationsResponse
-	2,  // 55: memos.api.v1.MemoService.CreateMemoComment:output_type -> memos.api.v1.Memo
-	21, // 56: memos.api.v1.MemoService.ListMemoComments:output_type -> memos.api.v1.ListMemoCommentsResponse
-	23, // 57: memos.api.v1.MemoService.ListMemoReactions:output_type -> memos.api.v1.ListMemoReactionsResponse
-	32, // 58: memos.api.v1.MemoService.UpsertMemoReaction:output_type -> memos.api.v1.Reaction
-	35, // 59: memos.api.v1.MemoService.DeleteMemoReaction:output_type -> google.protobuf.Empty
-	44, // [44:60] is the sub-list for method output_type
-	28, // [28:44] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	36, // 6: memos.api.v1.Memo.resources:type_name -> memos.api.v1.Resource
+	16, // 7: memos.api.v1.Memo.relations:type_name -> memos.api.v1.MemoRelation
+	37, // 8: memos.api.v1.Memo.reactions:type_name -> memos.api.v1.Reaction
+	30, // 9: memos.api.v1.Memo.property:type_name -> memos.api.v1.Memo.Property
+	4,  // 10: memos.api.v1.Memo.location:type_name -> memos.api.v1.Location
+	1,  // 11: memos.api.v1.Memo.agent_status:type_name -> memos.api.v1.AgentStatus
+	3,  // 12: memos.api.v1.CreateMemoRequest.memo:type_name -> memos.api.v1.Memo
+	33, // 13: memos.api.v1.ListMemosRequest.state:type_name -> memos.api.v1.State
+	38, // 14: memos.api.v1.ListMemosRequest.direction:type_name -> memos.api.v1.Direction
+	3,  // 15: memos.api.v1.ListMemosResponse.memos:type_name -> memos.api.v1.Memo
+	3,  // 16: memos.api.v1.UpdateMemoRequest.memo:type_name -> memos.api.v1.Memo
+	39, // 17: memos.api.v1.UpdateMemoRequest.update_mask:type_name -> google.protobuf.FieldMask
+	36, // 18: memos.api.v1.SetMemoResourcesRequest.resources:type_name -> memos.api.v1.Resource
+	36, // 19: memos.api.v1.ListMemoResourcesResponse.resources:type_name -> memos.api.v1.Resource
+	31, // 20: memos.api.v1.MemoRelation.memo:type_name -> memos.api.v1.MemoRelation.Memo
+	31, // 21: memos.api.v1.MemoRelation.related_memo:type_name -> memos.api.v1.MemoRelation.Memo
+	2,  // 22: memos.api.v1.MemoRelation.type:type_name -> memos.api.v1.MemoRelation.Type
+	16, // 23: memos.api.v1.SetMemoRelationsRequest.relations:type_name -> memos.api.v1.MemoRelation
+	16, // 24: memos.api.v1.ListMemoRelationsResponse.relations:type_name -> memos.api.v1.MemoRelation
+	3,  // 25: memos.api.v1.CreateMemoCommentRequest.comment:type_name -> memos.api.v1.Memo
+	3,  // 26: memos.api.v1.ListMemoCommentsResponse.memos:type_name -> memos.api.v1.Memo
+	37, // 27: memos.api.v1.ListMemoReactionsResponse.reactions:type_name -> memos.api.v1.Reaction
+	37, // 28: memos.api.v1.UpsertMemoReactionRequest.reaction:type_name -> memos.api.v1.Reaction
+	32, // 29: memos.api.v1.ExecuteAgentOnMemoRequest.mcp_settings_override:type_name -> memos.api.v1.ExecuteAgentOnMemoRequest.McpSettingsOverrideEntry
+	34, // 30: memos.api.v1.AgentTaskEvent.timestamp:type_name -> google.protobuf.Timestamp
+	1,  // 31: memos.api.v1.AgentTaskEvent.current_agent_status:type_name -> memos.api.v1.AgentStatus
+	5,  // 32: memos.api.v1.MemoService.CreateMemo:input_type -> memos.api.v1.CreateMemoRequest
+	6,  // 33: memos.api.v1.MemoService.ListMemos:input_type -> memos.api.v1.ListMemosRequest
+	8,  // 34: memos.api.v1.MemoService.GetMemo:input_type -> memos.api.v1.GetMemoRequest
+	9,  // 35: memos.api.v1.MemoService.UpdateMemo:input_type -> memos.api.v1.UpdateMemoRequest
+	10, // 36: memos.api.v1.MemoService.DeleteMemo:input_type -> memos.api.v1.DeleteMemoRequest
+	11, // 37: memos.api.v1.MemoService.RenameMemoTag:input_type -> memos.api.v1.RenameMemoTagRequest
+	12, // 38: memos.api.v1.MemoService.DeleteMemoTag:input_type -> memos.api.v1.DeleteMemoTagRequest
+	13, // 39: memos.api.v1.MemoService.SetMemoResources:input_type -> memos.api.v1.SetMemoResourcesRequest
+	14, // 40: memos.api.v1.MemoService.ListMemoResources:input_type -> memos.api.v1.ListMemoResourcesRequest
+	17, // 41: memos.api.v1.MemoService.SetMemoRelations:input_type -> memos.api.v1.SetMemoRelationsRequest
+	18, // 42: memos.api.v1.MemoService.ListMemoRelations:input_type -> memos.api.v1.ListMemoRelationsRequest
+	20, // 43: memos.api.v1.MemoService.CreateMemoComment:input_type -> memos.api.v1.CreateMemoCommentRequest
+	21, // 44: memos.api.v1.MemoService.ListMemoComments:input_type -> memos.api.v1.ListMemoCommentsRequest
+	23, // 45: memos.api.v1.MemoService.ListMemoReactions:input_type -> memos.api.v1.ListMemoReactionsRequest
+	25, // 46: memos.api.v1.MemoService.UpsertMemoReaction:input_type -> memos.api.v1.UpsertMemoReactionRequest
+	26, // 47: memos.api.v1.MemoService.DeleteMemoReaction:input_type -> memos.api.v1.DeleteMemoReactionRequest
+	27, // 48: memos.api.v1.MemoService.ExecuteAgentOnMemo:input_type -> memos.api.v1.ExecuteAgentOnMemoRequest
+	28, // 49: memos.api.v1.MemoService.StreamAgentTaskEvents:input_type -> memos.api.v1.StreamAgentTaskEventsRequest
+	3,  // 50: memos.api.v1.MemoService.CreateMemo:output_type -> memos.api.v1.Memo
+	7,  // 51: memos.api.v1.MemoService.ListMemos:output_type -> memos.api.v1.ListMemosResponse
+	3,  // 52: memos.api.v1.MemoService.GetMemo:output_type -> memos.api.v1.Memo
+	3,  // 53: memos.api.v1.MemoService.UpdateMemo:output_type -> memos.api.v1.Memo
+	40, // 54: memos.api.v1.MemoService.DeleteMemo:output_type -> google.protobuf.Empty
+	40, // 55: memos.api.v1.MemoService.RenameMemoTag:output_type -> google.protobuf.Empty
+	40, // 56: memos.api.v1.MemoService.DeleteMemoTag:output_type -> google.protobuf.Empty
+	40, // 57: memos.api.v1.MemoService.SetMemoResources:output_type -> google.protobuf.Empty
+	15, // 58: memos.api.v1.MemoService.ListMemoResources:output_type -> memos.api.v1.ListMemoResourcesResponse
+	40, // 59: memos.api.v1.MemoService.SetMemoRelations:output_type -> google.protobuf.Empty
+	19, // 60: memos.api.v1.MemoService.ListMemoRelations:output_type -> memos.api.v1.ListMemoRelationsResponse
+	3,  // 61: memos.api.v1.MemoService.CreateMemoComment:output_type -> memos.api.v1.Memo
+	22, // 62: memos.api.v1.MemoService.ListMemoComments:output_type -> memos.api.v1.ListMemoCommentsResponse
+	24, // 63: memos.api.v1.MemoService.ListMemoReactions:output_type -> memos.api.v1.ListMemoReactionsResponse
+	37, // 64: memos.api.v1.MemoService.UpsertMemoReaction:output_type -> memos.api.v1.Reaction
+	40, // 65: memos.api.v1.MemoService.DeleteMemoReaction:output_type -> google.protobuf.Empty
+	3,  // 66: memos.api.v1.MemoService.ExecuteAgentOnMemo:output_type -> memos.api.v1.Memo
+	29, // 67: memos.api.v1.MemoService.StreamAgentTaskEvents:output_type -> memos.api.v1.AgentTaskEvent
+	50, // [50:68] is the sub-list for method output_type
+	32, // [32:50] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_api_v1_memo_service_proto_init() }
@@ -1935,13 +2398,15 @@ func file_api_v1_memo_service_proto_init() {
 	file_api_v1_reaction_service_proto_init()
 	file_api_v1_resource_service_proto_init()
 	file_api_v1_memo_service_proto_msgTypes[0].OneofWrappers = []any{}
+	file_api_v1_memo_service_proto_msgTypes[24].OneofWrappers = []any{}
+	file_api_v1_memo_service_proto_msgTypes[26].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_v1_memo_service_proto_rawDesc), len(file_api_v1_memo_service_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   26,
+			NumEnums:      3,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

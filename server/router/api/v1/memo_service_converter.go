@@ -85,6 +85,33 @@ func (s *APIV1Service) convertMemoFromStore(ctx context.Context, memo *store.Mem
 	}
 	memoMessage.Snippet = snippet
 
+	// Populate Agentic fields
+	if memo.Payload != nil { // Assuming agent fields might be in payload or directly on memo store object
+		// Adapt these lines based on where agent fields are actually stored in store.Memo
+		// For now, let's assume they are directly on store.Memo and are nullable (e.g. *string, *int32)
+		if memo.AgentTaskID != nil {
+			memoMessage.AgentTaskId = *memo.AgentTaskID
+		}
+		if memo.AgentStatus != nil {
+			memoMessage.AgentStatus = convertAgentStatusFromStore(*memo.AgentStatus)
+		}
+		if memo.AgentQueryText != nil {
+			memoMessage.AgentQueryText = *memo.AgentQueryText
+		}
+		if memo.AgentPlanJson != nil {
+			memoMessage.AgentPlanJson = *memo.AgentPlanJson
+		}
+		if memo.AgentStepsJson != nil {
+			memoMessage.AgentStepsJson = *memo.AgentStepsJson
+		}
+		if memo.AgentResultJson != nil {
+			memoMessage.AgentResultJson = *memo.AgentResultJson
+		}
+		if memo.AgentErrorMessage != nil {
+			memoMessage.AgentErrorMessage = *memo.AgentErrorMessage
+		}
+	}
+
 	return memoMessage, nil
 }
 
@@ -145,5 +172,43 @@ func convertVisibilityToStore(visibility v1pb.Visibility) store.Visibility {
 		return store.Public
 	default:
 		return store.Private
+	}
+}
+
+func convertAgentStatusFromStore(status int32) v1pb.AgentStatus {
+	switch status {
+	case 1: // Corresponds to PENDING
+		return v1pb.AgentStatus_PENDING
+	case 2: // Corresponds to PLANNING
+		return v1pb.AgentStatus_PLANNING
+	case 3: // Corresponds to EXECUTING
+		return v1pb.AgentStatus_EXECUTING
+	case 4: // Corresponds to COMPLETED
+		return v1pb.AgentStatus_COMPLETED
+	case 5: // Corresponds to FAILED
+		return v1pb.AgentStatus_FAILED
+	case 6: // Corresponds to CANCELED
+		return v1pb.AgentStatus_CANCELED
+	default:
+		return v1pb.AgentStatus_AGENT_STATUS_UNSPECIFIED
+	}
+}
+
+func convertAgentStatusToStore(status v1pb.AgentStatus) int32 {
+	switch status {
+	case v1pb.AgentStatus_PENDING:
+		return 1
+	case v1pb.AgentStatus_PLANNING:
+		return 2
+	case v1pb.AgentStatus_EXECUTING:
+		return 3
+	case v1pb.AgentStatus_COMPLETED:
+		return 4
+	case v1pb.AgentStatus_FAILED:
+		return 5
+	case v1pb.AgentStatus_CANCELED:
+		return 6
+	default:
+		return 0 // Corresponds to AGENT_STATUS_UNSPECIFIED
 	}
 }

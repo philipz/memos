@@ -45,6 +45,8 @@ var (
 				DSN:         viper.GetString("dsn"),
 				InstanceURL: viper.GetString("instance-url"),
 				Version:     version.GetCurrentVersion(viper.GetString("mode")),
+				DeerFlowEndpoint: viper.GetString("deerflow-endpoint"),
+				DeerFlowAPIKey:   viper.GetString("deerflow-apikey"),
 			}
 			if err := instanceProfile.Validate(); err != nil {
 				panic(err)
@@ -112,6 +114,8 @@ func init() {
 	rootCmd.PersistentFlags().String("driver", "sqlite", "database driver")
 	rootCmd.PersistentFlags().String("dsn", "", "database source name(aka. DSN)")
 	rootCmd.PersistentFlags().String("instance-url", "", "the url of your memos instance")
+	rootCmd.PersistentFlags().String("deerflow-endpoint", "", "endpoint for DeerFlow service")
+	rootCmd.PersistentFlags().String("deerflow-apikey", "", "API key for DeerFlow service")
 
 	if err := viper.BindPFlag("mode", rootCmd.PersistentFlags().Lookup("mode")); err != nil {
 		panic(err)
@@ -137,10 +141,22 @@ func init() {
 	if err := viper.BindPFlag("instance-url", rootCmd.PersistentFlags().Lookup("instance-url")); err != nil {
 		panic(err)
 	}
+	if err := viper.BindPFlag("deerflow-endpoint", rootCmd.PersistentFlags().Lookup("deerflow-endpoint")); err != nil {
+		panic(err)
+	}
+	if err := viper.BindPFlag("deerflow-apikey", rootCmd.PersistentFlags().Lookup("deerflow-apikey")); err != nil {
+		panic(err)
+	}
 
 	viper.SetEnvPrefix("memos")
 	viper.AutomaticEnv()
 	if err := viper.BindEnv("instance-url", "MEMOS_INSTANCE_URL"); err != nil {
+		panic(err)
+	}
+	if err := viper.BindEnv("deerflow-endpoint", "MEMOS_DEERFLOW_ENDPOINT"); err != nil {
+		panic(err)
+	}
+	if err := viper.BindEnv("deerflow-apikey", "MEMOS_DEERFLOW_APIKEY"); err != nil {
 		panic(err)
 	}
 }

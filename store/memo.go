@@ -53,6 +53,15 @@ type Memo struct {
 
 	// Composed fields
 	ParentID *int32
+
+	// Agentic Feature Fields (correspond to DB columns)
+	AgentTaskID       *string // Nullable TEXT
+	AgentStatus       *int32  // Nullable INTEGER (stores enum int value)
+	AgentQueryText    *string // Nullable TEXT
+	AgentPlanJson     *string // Nullable TEXT for JSON
+	AgentStepsJson    *string // Nullable TEXT for JSON
+	AgentResultJson   *string // Nullable TEXT for JSON
+	AgentErrorMessage *string // Nullable TEXT
 }
 
 type FindMemo struct {
@@ -75,6 +84,7 @@ type FindMemo struct {
 	ExcludeContent  bool
 	ExcludeComments bool
 	Filter          *string
+	AgentTaskID     *string // Added for finding memo by agent task ID
 
 	// Pagination
 	Limit  *int
@@ -105,6 +115,15 @@ type UpdateMemo struct {
 	Visibility *Visibility
 	Pinned     *bool
 	Payload    *storepb.MemoPayload
+
+	// Agentic Feature Fields for Update
+	AgentTaskID       *string
+	AgentStatus       *int32
+	AgentQueryText    *string
+	AgentPlanJson     *string
+	AgentStepsJson    *string
+	AgentResultJson   *string
+	AgentErrorMessage *string
 }
 
 type DeleteMemo struct {
