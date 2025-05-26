@@ -1,6 +1,6 @@
 import { create, StateCreator } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import { AgentStatus, type ExecuteAgentOnMemoRequest, type AgentTaskEvent } from "../../types/proto/api/v1/memo_service";
+import { AgentStatus, type ExecuteAgentOnMemoRequest, type AgentTaskEvent, Memo as ApiMemo } from "../../types/proto/api/v1/memo_service";
 
 // import { type Memo } from "../../types/proto/api/v1/memo_service"; // Memo is not directly used in store state, but for context
 
@@ -36,6 +36,7 @@ export interface AgentTaskStep {
 export interface AgentTask {
   agentTaskId: string | null;
   memoId: number; // Assuming numeric ID for simplicity in store, matches AgentConfigModal
+  memoName: string; // Added: Full memo name e.g. memos/123 for API calls
   queryText: string;
   status: AgentStatus;
   plan: string[] | null;
@@ -54,7 +55,7 @@ export interface AgentStoreState {
   globalError: string | null;
 
   // Actions
-  openConfigModal: (memoId: number, initialQueryText: string) => void;
+  openConfigModal: (memo: ApiMemo) => void;
   closeConfigModal: (memoId: number) => void;
   startAgentTask: (memoId: number, request: ExecuteAgentOnMemoRequest) => Promise<void>;
   handleAgentEvent: (memoId: number, event: AgentTaskEvent) => void; // Simplified, real would be stream based
@@ -67,15 +68,16 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
   activeTasks: {},
   globalError: null,
 
-  openConfigModal: (memoId, initialQueryText) => {
+  openConfigModal: (memo) => {
     set((state) => {
+      const memoId = getMemoIdFromName(memo.name);
       if (!state.activeTasks[memoId]) {
-        // Initialize task state if it doesn't exist
         state.activeTasks[memoId] = {
           agentTaskId: null,
           memoId: memoId,
-          queryText: initialQueryText,
-          status: AgentStatus.AGENT_STATUS_UNSPECIFIED, // Or PENDING if modal opening implies intent
+          memoName: memo.name,
+          queryText: memo.content,
+          status: AgentStatus.AGENT_STATUS_UNSPECIFIED,
           plan: null,
           steps: [],
           result: null,
@@ -87,7 +89,8 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
         };
       } else {
         state.activeTasks[memoId].isConfigModalOpen = true;
-        state.activeTasks[memoId].queryText = initialQueryText; // Update query text if modal is reopened
+        state.activeTasks[memoId].queryText = memo.content;
+        state.activeTasks[memoId].memoName = memo.name;
       }
     });
   },
@@ -102,12 +105,14 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
 
   startAgentTask: async (memoId, request) => {
     set((state) => {
-      // Ensure task entry exists, update query text from actual request
-      const queryText = request.queryText || state.activeTasks[memoId]?.queryText || "";
+      const task = state.activeTasks[memoId];
+      if (!task) return;
+
+      const queryText = request.queryText || task.queryText || "";
+
       state.activeTasks[memoId] = {
-        ...state.activeTasks[memoId], // Spread existing to keep other fields like isConfigModalOpen
-        memoId: memoId,
-        agentTaskId: null, // Will be set by API response
+        ...task,
+        agentTaskId: null,
         queryText: queryText,
         status: AgentStatus.PENDING,
         plan: null,
@@ -117,21 +122,25 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
         rawEvents: [],
         userInterruptRequired: false,
         interruptData: null,
-        isConfigModalOpen: false, // Close modal on start
+        isConfigModalOpen: false,
       };
       state.globalError = null;
     });
 
     try {
-      const response = await mockMemoServiceClient.executeAgentOnMemo(request);
+      const taskDetails = get().activeTasks[memoId];
+      if (!taskDetails || !taskDetails.memoName) {
+        throw new Error("Memo name not found in store for starting agent task.");
+      }
+      const finalRequest = { ...request, name: taskDetails.memoName };
+
+      const response = await mockMemoServiceClient.executeAgentOnMemo(finalRequest);
       set((state) => {
         if (state.activeTasks[memoId]) {
           state.activeTasks[memoId].agentTaskId = response.agentTaskId;
-          state.activeTasks[memoId].status = response.initialStatus; // Should be PENDING
+          state.activeTasks[memoId].status = response.initialStatus;
         }
       });
-      // Here, you would typically initiate the event stream listening for this agentTaskId
-      // For example: startListeningToAgentEvents(response.agentTaskId, memoId);
     } catch (error: any) {
       console.error("Failed to start agent task in store:", error);
       set((state) => {
@@ -155,7 +164,7 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
       }
       if (event.isError && event.errorMessage) {
         task.error = event.errorMessage;
-        task.status = AgentStatus.FAILED; // Ensure status reflects error
+        task.status = AgentStatus.FAILED;
       }
 
       const eventData = event.dataJson ? JSON.parse(event.dataJson) : {};
@@ -165,12 +174,12 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
           task.plan = eventData.plan;
           task.status = AgentStatus.PLANNING;
           break;
-        case "USER_INTERRUPT_REQUIRED": // Mapped from actual AGENT_STATUS_INTERRUPTED if event types differ
+        case "USER_INTERRUPT_REQUIRED":
           task.userInterruptRequired = true;
           task.interruptData = eventData;
           task.status = AgentStatus.AGENT_STATUS_INTERRUPTED;
           break;
-        case "TASK_STEP_COMPLETED": // Assuming an event type for this
+        case "TASK_STEP_COMPLETED":
           {
             const stepIndex = task.steps.findIndex((s: AgentTaskStep) => s.stepNumber === eventData.stepNumber);
             if (stepIndex > -1) {
@@ -186,7 +195,7 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
             }
           }
           break;
-        case "TASK_STEP_FAILED": // Assuming an event type for this
+        case "TASK_STEP_FAILED":
           {
             const stepIndex = task.steps.findIndex((s: AgentTaskStep) => s.stepNumber === eventData.stepNumber);
             if (stepIndex > -1) {
@@ -200,14 +209,12 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
                 error: eventData.error,
               });
             }
-            task.status = AgentStatus.FAILED; // Overall task status
+            task.status = AgentStatus.FAILED;
           }
           break;
         case "MESSAGE_CHUNK":
-          // For simplicity, not accumulating chunks here, just noting the event
-          // A real implementation might append to a 'currentMessage' field
           if (!task.status || task.status === AgentStatus.PLANNING || task.status === AgentStatus.PENDING) {
-            task.status = AgentStatus.EXECUTING; // If receiving chunks, assume execution
+            task.status = AgentStatus.EXECUTING;
           }
           break;
         case "TASK_COMPLETED":
@@ -222,7 +229,6 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
           task.userInterruptRequired = false;
           task.interruptData = null;
           break;
-        // Add other event type handlers as needed, e.g., for tool calls
       }
     });
   },
@@ -241,23 +247,20 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
       if (state.activeTasks[memoId]) {
         state.activeTasks[memoId].userInterruptRequired = false;
         state.activeTasks[memoId].interruptData = null;
-        // Optimistically set status, backend will confirm via new events
         state.activeTasks[memoId].status = AgentStatus.EXECUTING;
       }
       state.globalError = null;
     });
 
     try {
-      // Actual API call: await memoServiceClient.submitInterruptFeedback({ agentTaskId: task.agentTaskId, feedback });
       console.log(`Mock submitInterruptFeedback for agentTaskId ${task.agentTaskId} with feedback: ${feedback}`);
-      // After submitting, the backend should send new events. The store will react to these via handleAgentEvent.
     } catch (error: any) {
       console.error("Failed to submit interrupt feedback in store:", error);
       set((state) => {
         if (state.activeTasks[memoId]) {
-          state.activeTasks[memoId].status = AgentStatus.AGENT_STATUS_INTERRUPTED; // Revert to interrupted on failure
+          state.activeTasks[memoId].status = AgentStatus.AGENT_STATUS_INTERRUPTED;
           state.activeTasks[memoId].error = error.message || "Failed to submit feedback";
-          state.activeTasks[memoId].userInterruptRequired = true; // Show UI again
+          state.activeTasks[memoId].userInterruptRequired = true;
         }
         state.globalError = error.message || "Failed to submit feedback";
       });
@@ -278,3 +281,8 @@ const agentStoreCreator: StateCreator<AgentStoreState, [["zustand/immer", never]
 export const useAgentStore = create<AgentStoreState>()(immer(agentStoreCreator));
 
 export default useAgentStore;
+
+const getMemoIdFromName = (name: string): number => {
+  const parts = name.split("/");
+  return parseInt(parts[parts.length - 1] || "0", 10);
+};

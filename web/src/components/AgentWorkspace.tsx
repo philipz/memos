@@ -2,128 +2,132 @@ import React, { useState, useEffect, useRef } from "react";
 // 假設的 gRPC 客戶端和生成的類型路徑
 import { memoServiceClient } from "../grpcweb";
 // import { StreamAgentTaskEventsRequest, AgentTaskEvent } from "../../proto/memo_service_pb";
-import { AgentStatus, type AgentTaskEvent, type StreamAgentTaskEventsRequest, ExecuteAgentOnMemoRequest } from "../types/proto/api/v1/memo_service";
+import {
+  AgentStatus,
+  type AgentTaskEvent,
+  type StreamAgentTaskEventsRequest,
+  ExecuteAgentOnMemoRequest,
+} from "../types/proto/api/v1/memo_service";
 
 // 模擬 AgentTaskEvent 的類型 (與 useAgentStore.ts 中 DisplayEvent 類似，但更原始)
-interface MockAgentTaskEventFromStream {
-  memoId: number; // Not part of actual AgentTaskEvent, context for mock
-  eventId: string; // Corresponds to sourceEventId in AgentTaskEvent
-  eventType: string; // e.g., 'PLAN_GENERATED', 'STEP_EXECUTED', 'USER_INTERRUPT_REQUIRED', 'TASK_COMPLETED', 'TASK_FAILED', 'MESSAGE_CHUNK', 'TOOL_CALL_REQUESTED', 'TOOL_CALL_COMPLETED'
-  dataJson: string; // JSON string of event-specific data
-  timestamp: number; // Unix timestamp (seconds), to be converted to Date for AgentTaskEvent
-}
+// interface MockAgentTaskEventFromStream { // Removed as mockGrpcClient is removed
+//   memoId: number;
+//   eventId: string;
+//   eventType: string;
+//   dataJson: string;
+//   timestamp: number;
+// }
 
 // 用於提交反饋的 Mock 類型
-interface MockFeedbackRequest {
-  agentTaskId: string;
-  feedback: string;
-  // memoId is contextually known in the component
-}
+// interface MockFeedbackRequest { // Removed as mockGrpcClient is removed
+//   agentTaskId: string;
+//   feedback: string;
+// }
 
 // 模擬 gRPC Stream - MockEventStream is unused, so commenting out or removing if not needed elsewhere
 // class MockEventStream { ... }
 
 // 模擬 gRPC 服務客戶端
-const mockGrpcClient = {
-  streamAgentTaskEvents: (request: { getMemoId: () => number; getAgentTaskId: () => string } /*, metadata: any*/) => {
-    console.log("Mock streamAgentTaskEvents called for memoId:", request.getMemoId(), "agentTaskId:", request.getAgentTaskId());
-    const listeners: { [key: string]: (eventOrError: any) => void } = {}; // More specific type for callback
-    let eventCount = 0;
-    const maxEvents = 10;
-    let intervalId: number | null = null;
-
-    const samplePlan = ["Step 1: Do A", "Step 2: Do B"];
-
-    const emitEvent = () => {
-      if (eventCount >= maxEvents) {
-        if (intervalId) clearInterval(intervalId);
-        if (listeners.end) listeners.end(null); // Pass null or a specific end event if needed
-        return;
-      }
-
-      let eventType = "MESSAGE_CHUNK";
-      let data: any = { message: `Event ${eventCount + 1} content...` };
-      let currentAgentStatus = AgentStatus.EXECUTING;
-      const isErrorForThisMockEvent = false;
-      const errorMessageForThisMockEvent: string | undefined = undefined;
-
-      if (eventCount === 0) {
-        eventType = "PLAN_GENERATED";
-        data = { plan: samplePlan };
-        currentAgentStatus = AgentStatus.PLANNING;
-      }
-      if (eventCount === 3) {
-        eventType = "USER_INTERRUPT_REQUIRED";
-        data = {
-          message: "Plan requires approval.",
-          plan: ["Step 1: Do A (modified)", "Step 2: Do B"],
-          options: [
-            { text: "Approve Plan", value: "approved" },
-            { text: "Reject", value: "rejected" },
-          ],
-        };
-        currentAgentStatus = AgentStatus.AGENT_STATUS_INTERRUPTED;
-      }
-      if (eventCount === 5) {
-        eventType = "TOOL_CALL_REQUESTED";
-        data = { tool_name: "search_web", tool_input: { query: "latest AI news" } };
-      }
-      if (eventCount === 6) {
-        eventType = "TOOL_CALL_COMPLETED";
-        data = { tool_name: "search_web", tool_output: { summary: "AI is advancing rapidly." } };
-      }
-      if (eventCount === maxEvents - 1) {
-        eventType = "TASK_COMPLETED";
-        data = { result: "All tasks finished successfully!" };
-        currentAgentStatus = AgentStatus.COMPLETED;
-      }
-
-      const mockEvent: MockAgentTaskEventFromStream = {
-        memoId: request.getMemoId(),
-        eventId: `event-${Date.now()}-${eventCount}`,
-        eventType: eventType,
-        dataJson: JSON.stringify(data),
-        timestamp: Math.floor(Date.now() / 1000),
-      };
-
-      const processedEventForListener: AgentTaskEvent = {
-        eventType: mockEvent.eventType,
-        dataJson: mockEvent.dataJson,
-        timestamp: new Date(mockEvent.timestamp * 1000),
-        isPartial: mockEvent.eventType === "MESSAGE_CHUNK",
-        isError: isErrorForThisMockEvent,
-        errorMessage: errorMessageForThisMockEvent,
-        currentAgentStatus: currentAgentStatus,
-        sourceEventId: mockEvent.eventId,
-      };
-
-      if (listeners.data) listeners.data(processedEventForListener);
-      eventCount++;
-    };
-
-    intervalId = window.setInterval(emitEvent, 1500);
-
-    return {
-      on: (type: string, callback: (eventOrError: any) => void) => {
-        (listeners as any)[type] = callback;
-        return this;
-      },
-      cancel: () => {
-        console.log("Mock stream cancelled for memoId:", request.getMemoId());
-        if (intervalId) clearInterval(intervalId);
-        if (listeners.error) listeners.error(new Error("Stream cancelled by client"));
-      },
-    };
-  },
-  submitInterruptFeedback: async (request: MockFeedbackRequest): Promise<object> => {
-    console.log("Mock submitInterruptFeedback called with:", request);
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve({});
-      }, 300);
-    });
-  },
-};
+// const mockGrpcClient = { // Removed as it's unused and real memoServiceClient is used
+//   streamAgentTaskEvents: (request: { getMemoId: () => number; getAgentTaskId: () => string } /*, metadata: any*/) => {
+//     console.log("Mock streamAgentTaskEvents called for memoId:", request.getMemoId(), "agentTaskId:", request.getAgentTaskId());
+//     const listeners: { [key: string]: (eventOrError: any) => void } = {};
+//     let eventCount = 0;
+//     const maxEvents = 10;
+//     let intervalId: number | null = null;
+//
+//     const samplePlan = ["Step 1: Do A", "Step 2: Do B"];
+//
+//     const emitEvent = () => {
+//       if (eventCount >= maxEvents) {
+//         if (intervalId) clearInterval(intervalId);
+//         if (listeners.end) listeners.end(null);
+//         return;
+//       }
+//
+//       let eventType = "MESSAGE_CHUNK";
+//       let data: any = { message: `Event ${eventCount + 1} content...` };
+//       let currentAgentStatus = AgentStatus.EXECUTING;
+//       const isErrorForThisMockEvent = false;
+//       const errorMessageForThisMockEvent: string | undefined = undefined;
+//
+//       if (eventCount === 0) {
+//         eventType = "PLAN_GENERATED";
+//         data = { plan: samplePlan };
+//         currentAgentStatus = AgentStatus.PLANNING;
+//       }
+//       if (eventCount === 3) {
+//         eventType = "USER_INTERRUPT_REQUIRED";
+//         data = {
+//           message: "Plan requires approval.",
+//           plan: ["Step 1: Do A (modified)", "Step 2: Do B"],
+//           options: [
+//             { text: "Approve Plan", value: "approved" },
+//             { text: "Reject", value: "rejected" },
+//           ],
+//         };
+//         currentAgentStatus = AgentStatus.AGENT_STATUS_INTERRUPTED;
+//       }
+//       if (eventCount === 5) {
+//         eventType = "TOOL_CALL_REQUESTED";
+//         data = { tool_name: "search_web", tool_input: { query: "latest AI news" } };
+//       }
+//       if (eventCount === 6) {
+//         eventType = "TOOL_CALL_COMPLETED";
+//         data = { tool_name: "search_web", tool_output: { summary: "AI is advancing rapidly." } };
+//       }
+//       if (eventCount === maxEvents - 1) {
+//         eventType = "TASK_COMPLETED";
+//         data = { result: "All tasks finished successfully!" };
+//         currentAgentStatus = AgentStatus.COMPLETED;
+//       }
+//
+//       const mockEvent: MockAgentTaskEventFromStream = {
+//         memoId: request.getMemoId(),
+//         eventId: `event-${Date.now()}-${eventCount}`,
+//         eventType: eventType,
+//         dataJson: JSON.stringify(data),
+//         timestamp: Math.floor(Date.now() / 1000),
+//       };
+//
+//       const processedEventForListener: AgentTaskEvent = {
+//         eventType: mockEvent.eventType,
+//         dataJson: mockEvent.dataJson,
+//         timestamp: new Date(mockEvent.timestamp * 1000),
+//         isPartial: mockEvent.eventType === "MESSAGE_CHUNK",
+//         isError: isErrorForThisMockEvent,
+//         errorMessage: errorMessageForThisMockEvent,
+//         currentAgentStatus: currentAgentStatus,
+//         sourceEventId: mockEvent.eventId,
+//       };
+//
+//       if (listeners.data) listeners.data(processedEventForListener);
+//       eventCount++;
+//     };
+//
+//     intervalId = window.setInterval(emitEvent, 1500);
+//
+//     return {
+//       on: (type: string, callback: (eventOrError: any) => void) => {
+//         (listeners as any)[type] = callback;
+//         return this;
+//       },
+//       cancel: () => {
+//         console.log("Mock stream cancelled for memoId:", request.getMemoId());
+//         if (intervalId) clearInterval(intervalId);
+//         if (listeners.error) listeners.error(new Error("Stream cancelled by client"));
+//       },
+//     };
+//   },
+//   submitInterruptFeedback: async (request: MockFeedbackRequest): Promise<object> => {
+//     console.log("Mock submitInterruptFeedback called with:", request);
+//     return new Promise((resolve) => {
+//       setTimeout(() => {
+//         resolve({});
+//       }, 300);
+//     });
+//   },
+// };
 
 interface AgentWorkspaceProps {
   agentTaskId: string;

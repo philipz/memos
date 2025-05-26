@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 // 假設的 gRPC 客戶端實例和生成的類型路徑，需要根據實際項目結構調整
-import { memoServiceClient } from "../grpcweb";
+// import { memoServiceClient } from "../grpcweb"; // Removed
 // import { ExecuteAgentOnMemoRequest, ExecuteAgentOnMemoRequest_MCPSettingsOverride } from "../../proto/memo_service_pb";
-import { type Memo, type ExecuteAgentOnMemoRequest, AgentStatus } from "../types/proto/api/v1/memo_service";
+import { type Memo, type ExecuteAgentOnMemoRequest } from "../types/proto/api/v1/memo_service";
+
+// Removed AgentStatus
 
 // 輔助函數：從 memo.name (e.g., "memos/123") 中提取數字 ID
 const getMemoIdFromName = (name: string): number => {
@@ -11,33 +13,33 @@ const getMemoIdFromName = (name: string): number => {
 };
 
 // 臨時的 mock 服務和類型，直到 gRPC 客戶端和 PB 文件正確集成
-const mockMemoServiceClient = {
-  executeAgentOnMemo: (request: ExecuteAgentOnMemoRequest /*metadata: any*/) => {
-    // metadata removed
-    console.log("Mock executeAgentOnMemo called with request:", request);
-    const memoName = request.name;
-    const numericMemoId = getMemoIdFromName(memoName);
-
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        if (numericMemoId % 2 === 0) {
-          console.log("Mock executeAgentOnMemo success for memoName:", memoName);
-          // 模擬成功時返回 Agent ID 和初始狀態
-          resolve({ agentTaskId: `agent-task-${Date.now()}`, initialStatus: AgentStatus.PENDING });
-        } else {
-          console.error("Mock executeAgentOnMemo failed for memoName:", memoName);
-          reject(new Error("Mock API call failed"));
-        }
-      }, 500);
-    });
-  },
-  // streamAgentTaskEvents 的 mock 應在 AgentWorkspace 中或專門的 service 中處理
-};
+// const mockMemoServiceClient = { // Removed
+//   executeAgentOnMemo: (request: ExecuteAgentOnMemoRequest /*metadata: any*/) => {
+//     // metadata removed
+//     console.log("Mock executeAgentOnMemo called with request:", request);
+//     const memoName = request.name;
+//     const numericMemoId = getMemoIdFromName(memoName);
+//
+//     return new Promise((resolve, reject) => {
+//       setTimeout(() => {
+//         if (numericMemoId % 2 === 0) {
+//           console.log("Mock executeAgentOnMemo success for memoName:", memoName);
+//           // 模擬成功時返回 Agent ID 和初始狀態
+//           resolve({ agentTaskId: `agent-task-${Date.now()}`, initialStatus: AgentStatus.PENDING });
+//         } else {
+//           console.error("Mock executeAgentOnMemo failed for memoName:", memoName);
+//           reject(new Error("Mock API call failed"));
+//         }
+//       }, 500);
+//     });
+//   },
+//   // streamAgentTaskEvents 的 mock 應在 AgentWorkspace 中或專門的 service 中處理
+// };
 
 interface AgentConfigModalProps {
   memo: Memo; // 使用從 protobuf 導入的 Memo 類型
   onClose: () => void;
-  onStartAgent: (agentTaskId: string, initialQueryText: string, initialStatus: AgentStatus) => void; // 更新回調參數
+  onStartAgent: (request: ExecuteAgentOnMemoRequest) => void; // <--- 修改簽名
 }
 
 const AgentConfigModal: React.FC<AgentConfigModalProps> = ({ memo, onClose, onStartAgent }) => {
@@ -61,7 +63,7 @@ const AgentConfigModal: React.FC<AgentConfigModalProps> = ({ memo, onClose, onSt
     setError(null);
 
     const requestParams: ExecuteAgentOnMemoRequest = {
-      name: memo.name, // 使用 memo.name
+      name: memo.name,
       queryText: queryText || undefined,
       autoAcceptedPlan: autoAcceptPlan,
       maxPlanIterations: typeof maxPlanIterations === "string" ? parseInt(maxPlanIterations, 10) : maxPlanIterations,
@@ -69,22 +71,26 @@ const AgentConfigModal: React.FC<AgentConfigModalProps> = ({ memo, onClose, onSt
       maxSearchResults: typeof maxSearchResults === "string" ? parseInt(maxSearchResults, 10) : maxSearchResults,
       enableBackgroundInvestigation: enableBackgroundInvestigation,
       mcpSettingsOverride: {},
-      // interruptFeedback 字段在初次調用時通常不設置
     };
 
     try {
-      const response = await memoServiceClient.executeAgentOnMemo(requestParams, {}); // 真實API調用
-      // const response = await mockMemoServiceClient.executeAgentOnMemo(requestParams /*, {}*/); // Mock API 調用, {} removed
+      // 實際API調用時，我們期望 memoServiceClient.executeAgentOnMemo 返回 agentId 和 initialStatus
+      // 但 onStartAgent 現在只關心 request 本身，因為 store 內部會處理 API 調用和狀態更新
+      // const response = await memoServiceClient.executeAgentOnMemo(requestParams, {}); // 真實API調用
+      // 為了與 Home.tsx 中的 store 邏輯保持一致，這裡應該直接調用 onStartAgent
+      // API 調用會由 store 中的 startAgentTask 處理
 
-      // 假設 response 包含 agentTaskId 和 initialStatus
-      onStartAgent((response as any).agentTaskId, queryText, (response as any).initialStatus);
-      onClose();
+      // 模擬 API 調用成功並獲取 agentTaskId 和 initialStatus 的過程應移至 store
+      // 此處直接將用戶配置好的 requestParams 傳遞出去
+      onStartAgent(requestParams); // <--- 使用新的簽名傳遞 requestParams
+      // onClose(); // 關閉模態框的邏輯最好由 store 在 startAgentTask 成功後處理，或者由 Home.tsx 控制
     } catch (err: any) {
-      console.error("Failed to start agent task:", err);
-      setError(err.message || "An unexpected error occurred");
-    } finally {
-      setIsLoading(false);
+      // 這個 try-catch 塊可能不需要了，如果 API 調用移到 store 中
+      console.error("Error in AgentConfigModal handleSave (should be handled by store ideally):", err);
+      setError(err.message || "An unexpected error occurred in modal");
+      setIsLoading(false); // 確保 loading 狀態被重置
     }
+    // setLoading(false) should be called in store or after onStartAgent promise resolves if it becomes async
   };
 
   return (

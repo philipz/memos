@@ -393,5 +393,8 @@
     "delete-confirm": "您確定要刪除此標籤嗎？所有關聯的memos將會被封存",
     "delete-tag": "刪除標籤",
     "no-tag-found": "找不到標籤"
+  },
+  "agent": {
+    "execute": "執行代理"
   }
 }

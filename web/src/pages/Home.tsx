@@ -1,17 +1,21 @@
 import dayjs from "dayjs";
 import { observer } from "mobx-react-lite";
-import { useMemo } from "react";
+import { useMemo, Fragment } from "react";
+import AgentConfigModal from "@/components/AgentConfigModal";
+import AgentWorkspace from "@/components/AgentWorkspace";
 import MemoView from "@/components/MemoView";
 import PagedMemoList from "@/components/PagedMemoList";
 import useCurrentUser from "@/hooks/useCurrentUser";
-import { useMemoFilterStore } from "@/store/v1";
+import { useMemoFilterStore, useAgentStore, useMemoStore } from "@/store/v1";
 import { viewStore, userStore } from "@/store/v2";
 import { Direction, State } from "@/types/proto/api/v1/common";
-import { Memo } from "@/types/proto/api/v1/memo_service";
+import { Memo, AgentStatus } from "@/types/proto/api/v1/memo_service";
 
 const Home = observer(() => {
   const user = useCurrentUser();
   const memoFilterStore = useMemoFilterStore();
+  const agentStore = useAgentStore();
+  const memoStore = useMemoStore();
   const selectedShortcut = userStore.state.shortcuts.find((shortcut) => shortcut.id === memoFilterStore.shortcut);
 
   const memoListFilter = useMemo(() => {
@@ -49,23 +53,61 @@ const Home = observer(() => {
   }, [user, memoFilterStore.filters, viewStore.state.orderByTimeAsc]);
 
   return (
-    <PagedMemoList
-      renderer={(memo: Memo) => <MemoView key={`${memo.name}-${memo.displayTime}`} memo={memo} showVisibility showPinned compact />}
-      listSort={(memos: Memo[]) =>
-        memos
-          .filter((memo) => memo.state === State.NORMAL)
-          .sort((a, b) =>
-            viewStore.state.orderByTimeAsc
-              ? dayjs(a.displayTime).unix() - dayjs(b.displayTime).unix()
-              : dayjs(b.displayTime).unix() - dayjs(a.displayTime).unix(),
-          )
-          .sort((a, b) => Number(b.pinned) - Number(a.pinned))
-      }
-      owner={user.name}
-      direction={viewStore.state.orderByTimeAsc ? Direction.ASC : Direction.DESC}
-      filter={selectedShortcut?.filter || ""}
-      oldFilter={memoListFilter}
-    />
+    <>
+      <PagedMemoList
+        renderer={(memo: Memo) => <MemoView key={`${memo.name}-${memo.displayTime}`} memo={memo} showVisibility showPinned compact />}
+        listSort={(memos: Memo[]) =>
+          memos
+            .filter((memo) => memo.state === State.NORMAL)
+            .sort((a, b) =>
+              viewStore.state.orderByTimeAsc
+                ? dayjs(a.displayTime).unix() - dayjs(b.displayTime).unix()
+                : dayjs(b.displayTime).unix() - dayjs(a.displayTime).unix(),
+            )
+            .sort((a, b) => Number(b.pinned) - Number(a.pinned))
+        }
+        owner={user.name}
+        direction={viewStore.state.orderByTimeAsc ? Direction.ASC : Direction.DESC}
+        filter={selectedShortcut?.filter || ""}
+        oldFilter={memoListFilter}
+      />
+      {Object.values(agentStore.activeTasks).map((task) => {
+        if (!task || !task.memoId) return null;
+
+        const memo = memoStore.getMemoByName(task.memoName);
+
+        if (!memo) {
+          return null;
+        }
+
+        return (
+          <Fragment key={task.memoId}>
+            {task.isConfigModalOpen && (
+              <AgentConfigModal
+                memo={memo}
+                onClose={() => agentStore.closeConfigModal(task.memoId)}
+                onStartAgent={(request) => {
+                  agentStore.startAgentTask(task.memoId, request);
+                }}
+              />
+            )}
+            {task.agentTaskId &&
+              task.status !== AgentStatus.AGENT_STATUS_UNSPECIFIED &&
+              task.status !== AgentStatus.COMPLETED &&
+              task.status !== AgentStatus.FAILED &&
+              task.status !== AgentStatus.CANCELED && (
+                <AgentWorkspace
+                  agentTaskId={task.agentTaskId}
+                  initialQueryText={task.queryText}
+                  initialStatus={task.status}
+                  memoId={task.memoId}
+                  onClose={() => agentStore.clearTaskState(task.memoId)}
+                />
+              )}
+          </Fragment>
+        );
+      })}
+    </>
   );
 });
 

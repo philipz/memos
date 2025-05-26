@@ -43,6 +43,10 @@ Learn more about [other installation methods](https://www.usememos.com/docs/inst
 > [!WARNING]
 > Memos is still under active development, so you may encounter bugs or breaking changes as we improve.
 
+## Lint
+
+`px prettier --write src/components/AgentConfigModal.tsx`
+
 ## Contribution
 
 Contributions are what make the open-source community such an amazing place to learn, inspire, and create. We greatly appreciate any contributions you make. Thank you for being a part of our community! 🥰

@@ -10,18 +10,25 @@ import {
   MoreVerticalIcon,
   TrashIcon,
   SquareCheckIcon,
+  PlayIcon,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useLocation } from "react-router-dom";
 import { markdownServiceClient } from "@/grpcweb";
 import useNavigateTo from "@/hooks/useNavigateTo";
-import { useMemoStore } from "@/store/v1";
+import { useMemoStore, useAgentStore } from "@/store/v1";
 import { userStore } from "@/store/v2";
 import { State } from "@/types/proto/api/v1/common";
 import { NodeType } from "@/types/proto/api/v1/markdown_service";
 import { Memo } from "@/types/proto/api/v1/memo_service";
 import { cn } from "@/utils";
 import { useTranslate } from "@/utils/i18n";
+
+// Helper function to extract ID from memo name (memos/123 -> 123)
+// const getMemoIdFromName = (name: string): number => { // Removed as no longer used in this file
+//   const parts = name.split("/");
+//   return parseInt(parts[parts.length - 1] || "0", 10);
+// };
 
 interface Props {
   memo: Memo;
@@ -49,6 +56,7 @@ const MemoActionMenu = (props: Props) => {
   const location = useLocation();
   const navigateTo = useNavigateTo();
   const memoStore = useMemoStore();
+  const agentStoreActions = useAgentStore();
   const hasCompletedTaskList = checkHasCompletedTaskList(memo);
   const isInMemoDetailPage = location.pathname.startsWith(`/${memo.name}`);
   const isComment = Boolean(memo.parent);
@@ -131,6 +139,10 @@ const MemoActionMenu = (props: Props) => {
     }
   };
 
+  const handleExecuteAgentClick = () => {
+    agentStoreActions.openConfigModal(memo);
+  };
+
   const handleRemoveCompletedTaskListItemsClick = async () => {
     const confirmed = window.confirm(t("memo.remove-completed-task-list-items-confirm"));
     if (confirmed) {
@@ -180,6 +192,10 @@ const MemoActionMenu = (props: Props) => {
             <MenuItem onClick={handleEditMemoClick}>
               <Edit3Icon className="w-4 h-auto" />
               {t("common.edit")}
+            </MenuItem>
+            <MenuItem onClick={handleExecuteAgentClick}>
+              <PlayIcon className="w-4 h-auto" />
+              {t("agent.execute")}
             </MenuItem>
           </>
         )}
