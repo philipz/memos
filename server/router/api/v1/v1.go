@@ -42,7 +42,7 @@ type APIV1Service struct {
 	grpcServer *grpc.Server
 
 	// For Agentic SSE streaming
-	agentEventChannels      map[string]chan *v1pb.AgentTaskEvent
+	agentEventChannels      *AgentEventChannels
 	agentEventChannelsMutex sync.Mutex
 }
 
@@ -54,7 +54,7 @@ func NewAPIV1Service(secret string, profile *profile.Profile, store *store.Store
 		Store:      store,
 		grpcServer: grpcServer,
 		// Initialize the map for agent event channels
-		agentEventChannels: make(map[string]chan *v1pb.AgentTaskEvent),
+		agentEventChannels: NewAgentEventChannels(),
 	}
 	grpc_health_v1.RegisterHealthServer(grpcServer, apiv1Service)
 	v1pb.RegisterWorkspaceServiceServer(grpcServer, apiv1Service)

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -19,21 +20,105 @@ import (
 	"github.com/usememos/gomark/restore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"strings"
+
 	"github.com/usememos/memos/plugin/webhook"
-	v1pb "github.com/usememos/memos/proto/gen/api/v1"
+	apiv1 "github.com/usememos/memos/proto/gen/api/v1"
 	storepb "github.com/usememos/memos/proto/gen/store"
 	"github.com/usememos/memos/server/runner/memopayload"
 	"github.com/usememos/memos/store"
-	"bytes"
-	"encoding/json"
-	"bufio"
-	"strings"
 )
 
-func (s *APIV1Service) CreateMemo(ctx context.Context, request *v1pb.CreateMemoRequest) (*v1pb.Memo, error) {
+// AgentEventChannels manages channels for agent task events.
+// It allows multiple clients to subscribe to events for the same agent task.
+// TODO: Consider moving this to a more central place if other services need similar fan-out eventing.
+type AgentEventChannels struct {
+	mu       sync.RWMutex
+	channels map[string]map[chan *apiv1.AgentTaskEvent]bool // agentTaskID -> set of channels
+}
+
+// NewAgentEventChannels creates a new AgentEventChannels manager.
+func NewAgentEventChannels() *AgentEventChannels {
+	return &AgentEventChannels{
+		channels: make(map[string]map[chan *apiv1.AgentTaskEvent]bool),
+	}
+}
+
+// Register adds a channel to the list of subscribers for an agent task.
+func (aec *AgentEventChannels) Register(agentTaskID string, ch chan *apiv1.AgentTaskEvent) {
+	aec.mu.Lock()
+	defer aec.mu.Unlock()
+	if aec.channels[agentTaskID] == nil {
+		aec.channels[agentTaskID] = make(map[chan *apiv1.AgentTaskEvent]bool)
+	}
+	aec.channels[agentTaskID][ch] = true
+	slog.Debug("Registered channel for agent task events", "agent_task_id", agentTaskID)
+}
+
+// Unregister removes a channel from the list of subscribers.
+func (aec *AgentEventChannels) Unregister(agentTaskID string, ch chan *apiv1.AgentTaskEvent) {
+	aec.mu.Lock()
+	defer aec.mu.Unlock()
+	if subscribers, ok := aec.channels[agentTaskID]; ok {
+		delete(subscribers, ch)
+		if len(subscribers) == 0 {
+			delete(aec.channels, agentTaskID)
+		}
+	}
+	// Note: The channel `ch` itself should be closed by the goroutine that created it (e.g., StreamAgentTaskEvents defer func).
+	slog.Debug("Unregistered channel for agent task events", "agent_task_id", agentTaskID)
+}
+
+// Send broadcasts an event to all registered channels for an agent task.
+func (aec *AgentEventChannels) Send(agentTaskID string, event *apiv1.AgentTaskEvent) {
+	aec.mu.RLock()
+	subscribers, ok := aec.channels[agentTaskID]
+	if !ok {
+		aec.mu.RUnlock()
+		slog.Debug("No subscribers for agent task event", "agent_task_id", agentTaskID, "event_type", event.EventType)
+		return
+	}
+
+	// Create a snapshot of channels to send to, to avoid holding lock during send
+	chansToSend := make([]chan *apiv1.AgentTaskEvent, 0, len(subscribers))
+	for ch := range subscribers {
+		chansToSend = append(chansToSend, ch)
+	}
+	aec.mu.RUnlock()
+
+	for _, ch := range chansToSend {
+		select {
+		case ch <- event:
+		default:
+			slog.Warn("Agent event channel full, unable to send event", "agent_task_id", agentTaskID, "event_type", event.EventType)
+		}
+	}
+	slog.Debug("Sent agent task event to subscribers", "agent_task_id", agentTaskID, "event_type", event.EventType, "subscriber_count", len(chansToSend))
+}
+
+// CloseAndRemove closes all channels for a specific agent task and removes the task entry.
+// This should be called when a task is definitively finished (completed, failed, canceled).
+func (aec *AgentEventChannels) CloseAndRemove(agentTaskID string) {
+	aec.mu.Lock()
+	defer aec.mu.Unlock()
+
+	if subscribers, ok := aec.channels[agentTaskID]; ok {
+		for ch := range subscribers {
+			close(ch) // Close each channel to signal consumers
+		}
+		delete(aec.channels, agentTaskID)
+		slog.Info("Closed and removed all channels for agent task", "agent_task_id", agentTaskID)
+	}
+}
+
+func (s *APIV1Service) CreateMemo(ctx context.Context, request *apiv1.CreateMemoRequest) (*apiv1.Memo, error) {
 	user, err := s.GetCurrentUser(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get user")
@@ -71,7 +156,7 @@ func (s *APIV1Service) CreateMemo(ctx context.Context, request *v1pb.CreateMemoR
 		return nil, err
 	}
 	if len(request.Memo.Resources) > 0 {
-		_, err := s.SetMemoResources(ctx, &v1pb.SetMemoResourcesRequest{
+		_, err := s.SetMemoResources(ctx, &apiv1.SetMemoResourcesRequest{
 			Name:      fmt.Sprintf("%s%s", MemoNamePrefix, memo.UID),
 			Resources: request.Memo.Resources,
 		})
@@ -80,7 +165,7 @@ func (s *APIV1Service) CreateMemo(ctx context.Context, request *v1pb.CreateMemoR
 		}
 	}
 	if len(request.Memo.Relations) > 0 {
-		_, err := s.SetMemoRelations(ctx, &v1pb.SetMemoRelationsRequest{
+		_, err := s.SetMemoRelations(ctx, &apiv1.SetMemoRelationsRequest{
 			Name:      fmt.Sprintf("%s%s", MemoNamePrefix, memo.UID),
 			Relations: request.Memo.Relations,
 		})
@@ -101,7 +186,7 @@ func (s *APIV1Service) CreateMemo(ctx context.Context, request *v1pb.CreateMemoR
 	return memoMessage, nil
 }
 
-func (s *APIV1Service) ListMemos(ctx context.Context, request *v1pb.ListMemosRequest) (*v1pb.ListMemosResponse, error) {
+func (s *APIV1Service) ListMemos(ctx context.Context, request *apiv1.ListMemosRequest) (*apiv1.ListMemosResponse, error) {
 	memoFind := &store.FindMemo{
 		// Exclude comments by default.
 		ExcludeComments: true,
@@ -117,14 +202,14 @@ func (s *APIV1Service) ListMemos(ctx context.Context, request *v1pb.ListMemosReq
 		memoFind.CreatorID = &userID
 		memoFind.OrderByPinned = true
 	}
-	if request.State == v1pb.State_ARCHIVED {
+	if request.State == apiv1.State_ARCHIVED {
 		state := store.Archived
 		memoFind.RowStatus = &state
 	} else {
 		state := store.Normal
 		memoFind.RowStatus = &state
 	}
-	if request.Direction == v1pb.Direction_ASC {
+	if request.Direction == apiv1.Direction_ASC {
 		memoFind.OrderByTimeAsc = true
 	}
 	if request.Filter != "" {
@@ -164,7 +249,7 @@ func (s *APIV1Service) ListMemos(ctx context.Context, request *v1pb.ListMemosReq
 
 	var limit, offset int
 	if request.PageToken != "" {
-		var pageToken v1pb.PageToken
+		var pageToken apiv1.PageToken
 		if err := unmarshalPageToken(request.PageToken, &pageToken); err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid page token: %v", err)
 		}
@@ -184,7 +269,7 @@ func (s *APIV1Service) ListMemos(ctx context.Context, request *v1pb.ListMemosReq
 		return nil, status.Errorf(codes.Internal, "failed to list memos: %v", err)
 	}
 
-	memoMessages := []*v1pb.Memo{}
+	memoMessages := []*apiv1.Memo{}
 	nextPageToken := ""
 	if len(memos) == limitPlusOne {
 		memos = memos[:limit]
@@ -201,14 +286,14 @@ func (s *APIV1Service) ListMemos(ctx context.Context, request *v1pb.ListMemosReq
 		memoMessages = append(memoMessages, memoMessage)
 	}
 
-	response := &v1pb.ListMemosResponse{
+	response := &apiv1.ListMemosResponse{
 		Memos:         memoMessages,
 		NextPageToken: nextPageToken,
 	}
 	return response, nil
 }
 
-func (s *APIV1Service) GetMemo(ctx context.Context, request *v1pb.GetMemoRequest) (*v1pb.Memo, error) {
+func (s *APIV1Service) GetMemo(ctx context.Context, request *apiv1.GetMemoRequest) (*apiv1.Memo, error) {
 	memoUID, err := ExtractMemoUIDFromName(request.Name)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid memo name: %v", err)
@@ -242,146 +327,117 @@ func (s *APIV1Service) GetMemo(ctx context.Context, request *v1pb.GetMemoRequest
 	return memoMessage, nil
 }
 
-func (s *APIV1Service) UpdateMemo(ctx context.Context, request *v1pb.UpdateMemoRequest) (*v1pb.Memo, error) {
+func (s *APIV1Service) UpdateMemo(ctx context.Context, request *apiv1.UpdateMemoRequest) (*apiv1.Memo, error) {
+	user, err := s.GetCurrentUser(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get current user for update: %v", err)
+	}
+	if user == nil {
+		return nil, status.Errorf(codes.Unauthenticated, "user not authenticated for update")
+	}
+
+	if len(request.UpdateMask.Paths) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "update mask is empty")
+	}
+
 	memoUID, err := ExtractMemoUIDFromName(request.Memo.Name)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid memo name: %v", err)
 	}
-	if request.UpdateMask == nil || len(request.UpdateMask.Paths) == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "update mask is required")
-	}
-
-	memo, err := s.Store.GetMemo(ctx, &store.FindMemo{UID: &memoUID})
+	memo, err := s.Store.GetMemo(ctx, &store.FindMemo{
+		UID: &memoUID,
+	})
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to get memo for update")
 	}
 	if memo == nil {
-		return nil, status.Errorf(codes.NotFound, "memo not found")
+		return nil, status.Errorf(codes.NotFound, "memo not found for update")
 	}
 
-	user, err := s.GetCurrentUser(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get current user")
-	}
-	// Only the creator or admin can update the memo.
 	if memo.CreatorID != user.ID && !isSuperUser(user) {
-		return nil, status.Errorf(codes.PermissionDenied, "permission denied")
+		return nil, status.Errorf(codes.PermissionDenied, "permission denied to update memo")
 	}
 
 	update := &store.UpdateMemo{
 		ID: memo.ID,
 	}
+
 	for _, path := range request.UpdateMask.Paths {
 		if path == "content" {
-			contentLengthLimit, err := s.getContentLengthLimit(ctx)
-			if err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to get content length limit")
-			}
-			if len(request.Memo.Content) > contentLengthLimit {
-				return nil, status.Errorf(codes.InvalidArgument, "content too long (max %d characters)", contentLengthLimit)
-			}
-			memo.Content = request.Memo.Content
-			if err := memopayload.RebuildMemoPayload(memo); err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to rebuild memo payload: %v", err)
-			}
-			update.Content = &memo.Content
-			update.Payload = memo.Payload
+			update.Content = &request.Memo.Content
 		} else if path == "visibility" {
-			workspaceMemoRelatedSetting, err := s.Store.GetWorkspaceMemoRelatedSetting(ctx)
-			if err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to get workspace memo related setting")
-			}
 			visibility := convertVisibilityToStore(request.Memo.Visibility)
-			if workspaceMemoRelatedSetting.DisallowPublicVisibility && visibility == store.Public {
-				return nil, status.Errorf(codes.PermissionDenied, "disable public memos system setting is enabled")
-			}
 			update.Visibility = &visibility
 		} else if path == "pinned" {
 			update.Pinned = &request.Memo.Pinned
-		} else if path == "state" {
-			rowStatus := convertStateToStore(request.Memo.State)
-			update.RowStatus = &rowStatus
-		} else if path == "create_time" {
-			createdTs := request.Memo.CreateTime.AsTime().Unix()
-			update.CreatedTs = &createdTs
-		} else if path == "update_time" {
-			updatedTs := time.Now().Unix()
-			if request.Memo.UpdateTime != nil {
-				updatedTs = request.Memo.UpdateTime.AsTime().Unix()
-			}
-			update.UpdatedTs = &updatedTs
-		} else if path == "display_time" {
-			displayTs := request.Memo.DisplayTime.AsTime().Unix()
-			memoRelatedSetting, err := s.Store.GetWorkspaceMemoRelatedSetting(ctx)
-			if err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to get workspace memo related setting")
-			}
-			if memoRelatedSetting.DisplayWithUpdateTime {
-				update.UpdatedTs = &displayTs
-			} else {
-				update.CreatedTs = &displayTs
-			}
-		} else if path == "location" {
-			payload := memo.Payload
-			payload.Location = convertLocationToStore(request.Memo.Location)
-			update.Payload = payload
 		} else if path == "resources" {
-			_, err := s.SetMemoResources(ctx, &v1pb.SetMemoResourcesRequest{
+			_, err := s.SetMemoResources(ctx, &apiv1.SetMemoResourcesRequest{
 				Name:      request.Memo.Name,
 				Resources: request.Memo.Resources,
 			})
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to set memo resources")
+				return nil, errors.Wrap(err, "failed to set memo resources during update")
 			}
 		} else if path == "relations" {
-			_, err := s.SetMemoRelations(ctx, &v1pb.SetMemoRelationsRequest{
+			_, err := s.SetMemoRelations(ctx, &apiv1.SetMemoRelationsRequest{
 				Name:      request.Memo.Name,
 				Relations: request.Memo.Relations,
 			})
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to set memo relations")
+				return nil, errors.Wrap(err, "failed to set memo relations during update")
 			}
 		} else if path == "agent_task_id" {
-			update.AgentTaskID = &request.Memo.AgentTaskId
+			update.AgentTaskID = request.Memo.AgentTaskId
 		} else if path == "agent_status" {
-			status := convertAgentStatusToStore(request.Memo.AgentStatus)
-			update.AgentStatus = &status
+			if request.Memo.AgentStatus != nil {
+				storeStatus := convertAgentStatusToStore(*request.Memo.AgentStatus)
+				update.AgentStatus = &storeStatus
+			}
 		} else if path == "agent_query_text" {
-			update.AgentQueryText = &request.Memo.AgentQueryText
+			update.AgentQueryText = request.Memo.AgentQueryText
 		} else if path == "agent_plan_json" {
-			update.AgentPlanJson = &request.Memo.AgentPlanJson
+			update.AgentPlanJson = request.Memo.AgentPlanJson
 		} else if path == "agent_steps_json" {
-			update.AgentStepsJson = &request.Memo.AgentStepsJson
+			update.AgentStepsJson = request.Memo.AgentStepsJson
 		} else if path == "agent_result_json" {
-			update.AgentResultJson = &request.Memo.AgentResultJson
+			update.AgentResultJson = request.Memo.AgentResultJson
 		} else if path == "agent_error_message" {
-			update.AgentErrorMessage = &request.Memo.AgentErrorMessage
+			update.AgentErrorMessage = request.Memo.AgentErrorMessage
 		}
 	}
 
 	if err = s.Store.UpdateMemo(ctx, update); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to update memo")
+		// Attempt to fetch the memo even if update failed to return its current state
+		currentMemo, getErr := s.Store.GetMemo(ctx, &store.FindMemo{ID: &memo.ID})
+		if getErr != nil {
+			slog.Error("Failed to get memo after update attempt failed", "update_error", err, "get_error", getErr)
+			return nil, status.Errorf(codes.Internal, "failed to update memo and then failed to retrieve its current state: update_err=%v, get_err=%v", err, getErr)
+		}
+		memoMessage, convertErr := s.convertMemoFromStore(ctx, currentMemo)
+		if convertErr != nil {
+			slog.Error("Failed to convert memo after update attempt failed", "update_error", err, "convert_error", convertErr)
+			return nil, status.Errorf(codes.Internal, "failed to update memo and then failed to convert its current state: update_err=%v, convert_err=%v", err, convertErr)
+		}
+		// It's debatable whether to dispatch a webhook if the primary update failed.
+		// For now, we'll return the current state and the original error.
+		return memoMessage, status.Errorf(codes.Internal, "failed to update memo: %v. Current memo state returned.", err)
 	}
 
-	memo, err = s.Store.GetMemo(ctx, &store.FindMemo{
-		ID: &memo.ID,
-	})
+	updatedMemoStore, err := s.Store.GetMemo(ctx, &store.FindMemo{ID: &memo.ID})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get memo")
+		return nil, errors.Wrap(err, "failed to get memo after update")
 	}
-	memoMessage, err := s.convertMemoFromStore(ctx, memo)
+	memoMessage, err := s.convertMemoFromStore(ctx, updatedMemoStore)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to convert memo")
+		return nil, errors.Wrap(err, "failed to convert memo after update")
 	}
-	// Try to dispatch webhook when memo is updated.
 	if err := s.DispatchMemoUpdatedWebhook(ctx, memoMessage); err != nil {
-		slog.Warn("Failed to dispatch memo updated webhook", slog.Any("err", err))
+		slog.Warn("Failed to dispatch memo updated webhook after update", slog.Any("err", err))
 	}
-
 	return memoMessage, nil
 }
 
-func (s *APIV1Service) DeleteMemo(ctx context.Context, request *v1pb.DeleteMemoRequest) (*emptypb.Empty, error) {
+func (s *APIV1Service) DeleteMemo(ctx context.Context, request *apiv1.DeleteMemoRequest) (*emptypb.Empty, error) {
 	memoUID, err := ExtractMemoUIDFromName(request.Name)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid memo name: %v", err)
@@ -453,7 +509,7 @@ func (s *APIV1Service) DeleteMemo(ctx context.Context, request *v1pb.DeleteMemoR
 	return &emptypb.Empty{}, nil
 }
 
-func (s *APIV1Service) CreateMemoComment(ctx context.Context, request *v1pb.CreateMemoCommentRequest) (*v1pb.Memo, error) {
+func (s *APIV1Service) CreateMemoComment(ctx context.Context, request *apiv1.CreateMemoCommentRequest) (*apiv1.Memo, error) {
 	memoUID, err := ExtractMemoUIDFromName(request.Name)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid memo name: %v", err)
@@ -464,7 +520,7 @@ func (s *APIV1Service) CreateMemoComment(ctx context.Context, request *v1pb.Crea
 	}
 
 	// Create the memo comment first.
-	memoComment, err := s.CreateMemo(ctx, &v1pb.CreateMemoRequest{Memo: request.Comment})
+	memoComment, err := s.CreateMemo(ctx, &apiv1.CreateMemoRequest{Memo: request.Comment})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create memo")
 	}
@@ -490,7 +546,7 @@ func (s *APIV1Service) CreateMemoComment(ctx context.Context, request *v1pb.Crea
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid memo creator")
 	}
-	if memoComment.Visibility != v1pb.Visibility_PRIVATE && creatorID != relatedMemo.CreatorID {
+	if memoComment.Visibility != apiv1.Visibility_PRIVATE && creatorID != relatedMemo.CreatorID {
 		activity, err := s.Store.CreateActivity(ctx, &store.Activity{
 			CreatorID: creatorID,
 			Type:      store.ActivityTypeMemoComment,
@@ -521,7 +577,7 @@ func (s *APIV1Service) CreateMemoComment(ctx context.Context, request *v1pb.Crea
 	return memoComment, nil
 }
 
-func (s *APIV1Service) ListMemoComments(ctx context.Context, request *v1pb.ListMemoCommentsRequest) (*v1pb.ListMemoCommentsResponse, error) {
+func (s *APIV1Service) ListMemoComments(ctx context.Context, request *apiv1.ListMemoCommentsRequest) (*apiv1.ListMemoCommentsResponse, error) {
 	memoUID, err := ExtractMemoUIDFromName(request.Name)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid memo name: %v", err)
@@ -551,7 +607,7 @@ func (s *APIV1Service) ListMemoComments(ctx context.Context, request *v1pb.ListM
 		return nil, status.Errorf(codes.Internal, "failed to list memo relations")
 	}
 
-	var memos []*v1pb.Memo
+	var memos []*apiv1.Memo
 	for _, memoRelation := range memoRelations {
 		memo, err := s.Store.GetMemo(ctx, &store.FindMemo{
 			ID: &memoRelation.MemoID,
@@ -568,13 +624,13 @@ func (s *APIV1Service) ListMemoComments(ctx context.Context, request *v1pb.ListM
 		}
 	}
 
-	response := &v1pb.ListMemoCommentsResponse{
+	response := &apiv1.ListMemoCommentsResponse{
 		Memos: memos,
 	}
 	return response, nil
 }
 
-func (s *APIV1Service) RenameMemoTag(ctx context.Context, request *v1pb.RenameMemoTagRequest) (*emptypb.Empty, error) {
+func (s *APIV1Service) RenameMemoTag(ctx context.Context, request *apiv1.RenameMemoTagRequest) (*emptypb.Empty, error) {
 	user, err := s.GetCurrentUser(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get current user")
@@ -624,7 +680,7 @@ func (s *APIV1Service) RenameMemoTag(ctx context.Context, request *v1pb.RenameMe
 	return &emptypb.Empty{}, nil
 }
 
-func (s *APIV1Service) DeleteMemoTag(ctx context.Context, request *v1pb.DeleteMemoTagRequest) (*emptypb.Empty, error) {
+func (s *APIV1Service) DeleteMemoTag(ctx context.Context, request *apiv1.DeleteMemoTagRequest) (*emptypb.Empty, error) {
 	user, err := s.GetCurrentUser(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get current user")
@@ -679,21 +735,21 @@ func (s *APIV1Service) getContentLengthLimit(ctx context.Context) (int, error) {
 }
 
 // DispatchMemoCreatedWebhook dispatches webhook when memo is created.
-func (s *APIV1Service) DispatchMemoCreatedWebhook(ctx context.Context, memo *v1pb.Memo) error {
+func (s *APIV1Service) DispatchMemoCreatedWebhook(ctx context.Context, memo *apiv1.Memo) error {
 	return s.dispatchMemoRelatedWebhook(ctx, memo, "memos.memo.created")
 }
 
 // DispatchMemoUpdatedWebhook dispatches webhook when memo is updated.
-func (s *APIV1Service) DispatchMemoUpdatedWebhook(ctx context.Context, memo *v1pb.Memo) error {
+func (s *APIV1Service) DispatchMemoUpdatedWebhook(ctx context.Context, memo *apiv1.Memo) error {
 	return s.dispatchMemoRelatedWebhook(ctx, memo, "memos.memo.updated")
 }
 
 // DispatchMemoDeletedWebhook dispatches webhook when memo is deleted.
-func (s *APIV1Service) DispatchMemoDeletedWebhook(ctx context.Context, memo *v1pb.Memo) error {
+func (s *APIV1Service) DispatchMemoDeletedWebhook(ctx context.Context, memo *apiv1.Memo) error {
 	return s.dispatchMemoRelatedWebhook(ctx, memo, "memos.memo.deleted")
 }
 
-func (s *APIV1Service) dispatchMemoRelatedWebhook(ctx context.Context, memo *v1pb.Memo, activityType string) error {
+func (s *APIV1Service) dispatchMemoRelatedWebhook(ctx context.Context, memo *apiv1.Memo, activityType string) error {
 	creatorID, err := ExtractUserIDFromName(memo.Creator)
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "invalid memo creator")
@@ -718,12 +774,12 @@ func (s *APIV1Service) dispatchMemoRelatedWebhook(ctx context.Context, memo *v1p
 	return nil
 }
 
-func convertMemoToWebhookPayload(memo *v1pb.Memo) (*v1pb.WebhookRequestPayload, error) {
+func convertMemoToWebhookPayload(memo *apiv1.Memo) (*apiv1.WebhookRequestPayload, error) {
 	creatorID, err := ExtractUserIDFromName(memo.Creator)
 	if err != nil {
 		return nil, errors.Wrap(err, "invalid memo creator")
 	}
-	return &v1pb.WebhookRequestPayload{
+	return &apiv1.WebhookRequestPayload{
 		Creator:    fmt.Sprintf("%s%d", UserNamePrefix, creatorID),
 		CreateTime: timestamppb.New(time.Now()),
 		Memo:       memo,
@@ -763,7 +819,7 @@ func substring(s string, length int) string {
 }
 
 // ExecuteAgentOnMemo implements the gRPC method to trigger an agentic process on a memo.
-func (s *APIV1Service) ExecuteAgentOnMemo(ctx context.Context, request *v1pb.ExecuteAgentOnMemoRequest) (*v1pb.Memo, error) {
+func (s *APIV1Service) ExecuteAgentOnMemo(ctx context.Context, request *apiv1.ExecuteAgentOnMemoRequest) (*apiv1.Memo, error) {
 	currentUser, err := s.GetCurrentUser(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get current user: %v", err)
@@ -785,60 +841,53 @@ func (s *APIV1Service) ExecuteAgentOnMemo(ctx context.Context, request *v1pb.Exe
 		return nil, status.Errorf(codes.NotFound, "memo not found: %s", memoUID)
 	}
 
-	// Ensure this memo belongs to the current user or is public/protected if modification rules allow.
-	// For now, assuming only the creator can execute an agent.
 	if memo.CreatorID != currentUser.ID {
-		// Add more sophisticated checks if other users can trigger agents on non-private memos.
 		return nil, status.Errorf(codes.PermissionDenied, "user does not have permission to execute agent on this memo")
 	}
 
-	// Generate a new agent task ID.
 	agentTaskID := uuid.New().String()
-	initialAgentStatus := v1pb.AgentStatus_AGENT_STATUS_PROCESSING // Assuming PROCESSING is a valid enum value
+	initialAPIStatus := apiv1.AgentStatus_PENDING
 	queryText := request.QueryText
-	if queryText == "" {
-		queryText = memo.Content // Default to memo content if no specific query text
+	if queryText == nil || *queryText == "" {
+		tempContent := memo.Content
+		queryText = &tempContent
 	}
 
-	// Update the memo with agent task ID and initial status.
 	memoUpdate := &store.UpdateMemo{
-		ID:             memo.ID,
-		AgentTaskID:    &agentTaskID,
-		AgentStatus:    (*int32)(convertAgentStatusToStore(initialAgentStatus)),
-		AgentQueryText: &queryText,
+		ID:          memo.ID,
+		AgentTaskID: &agentTaskID,
 	}
+	storeStatus := convertAgentStatusToStore(initialAPIStatus)
+	memoUpdate.AgentStatus = &storeStatus
+	memoUpdate.AgentQueryText = queryText
+
 	if err := s.Store.UpdateMemo(ctx, memoUpdate); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to update memo with agent task ID: %v", err)
 	}
 
-	// Fetch the updated memo to return the latest state.
-	updatedMemo, err := s.Store.GetMemo(ctx, &store.FindMemo{ID: &memo.ID})
+	updatedMemoStore, err := s.Store.GetMemo(ctx, &store.FindMemo{ID: &memo.ID})
 	if err != nil {
 		slog.Error("failed to get updated memo after setting agent task ID", slog.Any("error", err), slog.String("memo_uid", memoUID))
-		// Continue to launch goroutine, but the returned memo might not have agent fields immediately.
-		// Or, return the locally constructed memo if GetMemo fails. For now, log and proceed.
 	} else {
-		memo = updatedMemo // Use the freshly fetched memo
+		memo = updatedMemoStore
 	}
-	
-	// Use a background context for the goroutine that makes the external call.
-	// The original ctx from the gRPC request might be cancelled if the client disconnects,
-	// but we want the agent task to continue processing on the backend.
-	deerflowEndpoint := s.Profile.DeerFlowEndpoint // Get from profile/config
-	deerflowAPIKey := s.Profile.DeerFlowAPIKey   // Get from profile/config
+
+	deerflowEndpoint := s.Profile.DeerFlowEndpoint
+	deerflowAPIKey := s.Profile.DeerFlowAPIKey
 
 	if deerflowEndpoint == "" {
 		slog.Error("DeerFlow endpoint is not configured in Memos profile")
-		// Update memo to FAILED status
-		s.updateMemoAgentStatus(ctx, memo.ID, agentTaskID, v1pb.AgentStatus_AGENT_STATUS_FAILED, "", "DeerFlow endpoint not configured")
-		return s.convertMemoFromStore(ctx, memo) // Return the memo with FAILED status
+		s.updateMemoAgentStatus(ctx, memo.ID, agentTaskID, apiv1.AgentStatus_FAILED, nil, proto.String("DeerFlow endpoint not configured"), nil, nil)
+		// Close event channels for this task as it failed immediately.
+		s.agentEventChannels.CloseAndRemove(agentTaskID)
+		return s.convertMemoFromStore(ctx, memo)
 	}
 
 	go s.handleDeerflowSSE(
-		context.Background(), 
+		context.Background(),
 		memo.ID,
 		agentTaskID,
-		queryText,
+		*queryText,
 		request,
 		deerflowEndpoint,
 		deerflowAPIKey,
@@ -846,26 +895,25 @@ func (s *APIV1Service) ExecuteAgentOnMemo(ctx context.Context, request *v1pb.Exe
 
 	slog.Info("Launched Deerflow SSE handler goroutine", "memo_id", memo.ID, "agent_task_id", agentTaskID)
 
-	// Convert the updated memo to protobuf format for the response.
 	memoMessage, err := s.convertMemoFromStore(ctx, memo)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to convert updated memo: %v", err)
 	}
-
 	return memoMessage, nil
 }
 
 // handleDeerflowSSE is run in a goroutine to manage the SSE connection to DeerFlow.
 func (s *APIV1Service) handleDeerflowSSE(
-	ctx context.Context, // Note: This context is from context.Background(), manage its lifecycle if needed.
+	ctx context.Context,
 	memoID int32,
 	agentTaskID string,
 	queryText string,
-	agentRequest *v1pb.ExecuteAgentOnMemoRequest,
+	agentRequest *apiv1.ExecuteAgentOnMemoRequest,
 	deerflowEndpoint string,
-	deerflowAPIKey string, // Optional, if DeerFlow requires API key
+	deerflowAPIKey string,
 ) {
 	slog.Info("handleDeerflowSSE started", "memo_id", memoID, "agent_task_id", agentTaskID)
+	defer s.agentEventChannels.CloseAndRemove(agentTaskID)
 	defer slog.Info("handleDeerflowSSE finished", "memo_id", memoID, "agent_task_id", agentTaskID)
 
 	// 1. Construct DeerFlow ChatRequest
@@ -874,34 +922,24 @@ func (s *APIV1Service) handleDeerflowSSE(
 		Content string `json:"content"`
 	}
 	type DeerFlowChatRequest struct {
-		Messages                    []DeerFlowChatMessage `json:"messages"`
-		ThreadID                    string                `json:"thread_id"`
-		MaxPlanIterations           *int                  `json:"max_plan_iterations,omitempty"` // Use pointers for optional fields
-		MaxStepNum                  *int                  `json:"max_step_num,omitempty"`
-		MaxSearchResults            *int                  `json:"max_search_results,omitempty"`
-		AutoAcceptedPlan            *bool                 `json:"auto_accepted_plan,omitempty"`
-		InterruptFeedback           *string               `json:"interrupt_feedback,omitempty"`
-		MCPSettings                 map[string]any        `json:"mcp_settings,omitempty"`
-		EnableBackgroundInvestigation *bool               `json:"enable_background_investigation,omitempty"`
+		Messages                      []DeerFlowChatMessage `json:"messages"`
+		ThreadID                      string                `json:"thread_id"`
+		MaxPlanIterations             *int                  `json:"max_plan_iterations,omitempty"`
+		MaxStepNum                    *int                  `json:"max_step_num,omitempty"`
+		MaxSearchResults              *int                  `json:"max_search_results,omitempty"`
+		AutoAcceptedPlan              *bool                 `json:"auto_accepted_plan,omitempty"`
+		InterruptFeedback             *string               `json:"interrupt_feedback,omitempty"`
+		MCPSettings                   map[string]any        `json:"mcp_settings,omitempty"`
+		EnableBackgroundInvestigation *bool                 `json:"enable_background_investigation,omitempty"`
 	}
-
-	// Example values: These should ideally come from Memos config or ExecuteAgentOnMemoRequest.
-	// For now, we'll use some defaults or nil for optional ones.
-	// trueBool := true
-	// defaultMaxPlanIterations := 10 // Example
-	// defaultMaxStepNum := 20      // Example
 
 	dfRequest := DeerFlowChatRequest{
-		Messages: []DeerFlowChatMessage{
-			{Role: "user", Content: queryText},
-		},
+		Messages: []DeerFlowChatMessage{{Role: "user", Content: queryText}},
 		ThreadID: agentTaskID,
-		// MaxPlanIterations, MaxStepNum, etc. will be set from agentRequest or Memos defaults
 	}
 
-	// Populate optional fields from agentRequest or Memos server defaults
 	if agentRequest.MaxPlanIterations != nil {
-		val := int(agentRequest.GetMaxPlanIterations()) // GetMaxPlanIterations to handle optional int32
+		val := int(agentRequest.GetMaxPlanIterations())
 		dfRequest.MaxPlanIterations = &val
 	}
 	if agentRequest.MaxStepNum != nil {
@@ -913,16 +951,8 @@ func (s *APIV1Service) handleDeerflowSSE(
 		dfRequest.MaxSearchResults = &val
 	}
 	if agentRequest.AutoAcceptedPlan != nil {
-		val := agentRequest.GetAutoAcceptedPlan() // GetAutoAcceptedPlan to handle optional bool
+		val := agentRequest.GetAutoAcceptedPlan()
 		dfRequest.AutoAcceptedPlan = &val
-	} else {
-		// Example: Fallback to a Memos server-side default if not provided in request
-		// defaultAutoAccept := true // Load this from s.Profile or config
-		// dfRequest.AutoAcceptedPlan = &defaultAutoAccept
-		// For now, if not in request, it remains nil (and omitempty will work)
-		// Or, explicitly set a hardcoded default for now if needed:
-		// trueVal := true
-		// dfRequest.AutoAcceptedPlan = &trueVal
 	}
 	if agentRequest.InterruptFeedback != nil {
 		val := agentRequest.GetInterruptFeedback()
@@ -932,7 +962,6 @@ func (s *APIV1Service) handleDeerflowSSE(
 		val := agentRequest.GetEnableBackgroundInvestigation()
 		dfRequest.EnableBackgroundInvestigation = &val
 	}
-	// Populate MCPSettings from agentRequest
 	if agentRequest.McpSettingsOverride != nil && len(agentRequest.GetMcpSettingsOverride()) > 0 {
 		dfRequest.MCPSettings = make(map[string]any)
 		for k, v := range agentRequest.GetMcpSettingsOverride() {
@@ -943,67 +972,58 @@ func (s *APIV1Service) handleDeerflowSSE(
 	requestBodyBytes, err := json.Marshal(dfRequest)
 	if err != nil {
 		slog.Error("Failed to marshal DeerFlow request", "error", err, "agent_task_id", agentTaskID)
-		s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, v1pb.AgentStatus_AGENT_STATUS_FAILED, "", fmt.Sprintf("Failed to prepare request: %v", err))
+		s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, apiv1.AgentStatus_FAILED, nil, proto.String(fmt.Sprintf("Failed to prepare request: %v", err)), nil, nil)
 		return
 	}
-	slog.Info("DeerFlow request body", "body", string(requestBodyBytes))
+	slog.Debug("DeerFlow request body", "body", string(requestBodyBytes))
 
-	// 2. Make HTTP POST request to DeerFlow
 	req, err := http.NewRequestWithContext(ctx, "POST", deerflowEndpoint, bytes.NewBuffer(requestBodyBytes))
 	if err != nil {
 		slog.Error("Failed to create DeerFlow HTTP request", "error", err, "agent_task_id", agentTaskID)
-		s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, v1pb.AgentStatus_AGENT_STATUS_FAILED, "", fmt.Sprintf("Failed to create HTTP request: %v", err))
+		s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, apiv1.AgentStatus_FAILED, nil, proto.String(fmt.Sprintf("Failed to create HTTP request: %v", err)), nil, nil)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	if deerflowAPIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+deerflowAPIKey) // Example, adjust if different auth scheme
+		req.Header.Set("Authorization", "Bearer "+deerflowAPIKey)
 	}
 
-	client := &http.Client{Timeout: 0} // Timeout 0 for long-lived SSE connections
+	client := &http.Client{Timeout: 0}
 	resp, err := client.Do(req)
 	if err != nil {
 		slog.Error("Failed to connect to DeerFlow", "error", err, "agent_task_id", agentTaskID, "endpoint", deerflowEndpoint)
-		s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, v1pb.AgentStatus_AGENT_STATUS_FAILED, "", fmt.Sprintf("Connection to DeerFlow failed: %v", err))
+		s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, apiv1.AgentStatus_FAILED, nil, proto.String(fmt.Sprintf("Connection to DeerFlow failed: %v", err)), nil, nil)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// Read body for more error details from DeerFlow if possible
 		var errorBody []byte
 		if resp.Body != nil {
-			errorBody, _ = io.ReadAll(resp.Body) // Ignoring read error here
+			errorBody, _ = io.ReadAll(resp.Body)
 		}
-		slog.Error("DeerFlow request failed", "status_code", resp.StatusCode, "agent_task_id", agentTaskID, "response_body", string(errorBody))
-		s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, v1pb.AgentStatus_AGENT_STATUS_FAILED, "", fmt.Sprintf("DeerFlow returned error: %d %s", resp.StatusCode, string(errorBody)))
+		slog.Error("DeerFlow request failed", "status_code", resp.StatusCode, "body", string(errorBody))
+		s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, apiv1.AgentStatus_FAILED, nil, proto.String(fmt.Sprintf("DeerFlow error %d: %s", resp.StatusCode, string(errorBody))), nil, nil)
 		return
 	}
-
 	slog.Info("Connected to DeerFlow SSE stream", "agent_task_id", agentTaskID)
 
-	// 3. Process SSE stream
 	reader := bufio.NewReader(resp.Body)
-	var eventType, dataContent string
-	var id string // For SSE 'id:' field, if present
-
+	var eventTypeStr, dataContent, sseID string
 	var resultBuilder strings.Builder
 	var planJSONString string
-	var stepsJSONArray []string // Store JSON strings of individual steps
-	var accumulatedStepsJson string // Periodically updated JSON array string of all steps
+	var stepsJSONArray []string
+	var accumulatedStepsJson string = "[]"
 
-	// Define structs for expected DeerFlow event data payloads
 	type DeerFlowMessageChunkData struct {
-		ThreadID      string `json:"thread_id"`
-		Agent         string `json:"agent"`
-		ID            string `json:"id"` // This is the message chunk's own ID from DeerFlow
-		Role          string `json:"role"`
-		Content       string `json:"content"`
-		FinishReason  *string `json:"finish_reason,omitempty"` // Pointer for optional field
-		// Add other fields if present in DeerFlow's message_chunk, e.g., tool_calls
+		ThreadID     string  `json:"thread_id"`
+		Agent        string  `json:"agent"`
+		ID           string  `json:"id"`
+		Role         string  `json:"role"`
+		Content      string  `json:"content"`
+		FinishReason *string `json:"finish_reason,omitempty"`
 	}
-
 	type DeerFlowPlanData struct {
 		Steps []struct {
 			Title       string `json:"title"`
@@ -1012,12 +1032,10 @@ func (s *APIV1Service) handleDeerflowSSE(
 		} `json:"steps"`
 		RawPlanText string `json:"raw_plan_text"`
 	}
-
 	type DeerFlowThoughtData struct {
 		Thought string `json:"thought"`
 		Agent   string `json:"agent"`
 	}
-
 	type DeerFlowToolCallData struct {
 		ID       string `json:"id"`
 		Type     string `json:"type"`
@@ -1027,14 +1045,12 @@ func (s *APIV1Service) handleDeerflowSSE(
 		} `json:"function"`
 		Agent string `json:"agent"`
 	}
-
 	type DeerFlowToolResultData struct {
 		ToolCallID string `json:"tool_call_id"`
-		Output     any    `json:"output"` // Changed to any for flexibility
+		Output     any    `json:"output"`
 		Agent      string `json:"agent"`
 		IsError    bool   `json:"is_error,omitempty"`
 	}
-
 	type DeerFlowInterruptData struct {
 		Reason           string         `json:"reason"`
 		FeedbackRequired bool           `json:"feedback_required"`
@@ -1042,293 +1058,226 @@ func (s *APIV1Service) handleDeerflowSSE(
 		Agent            string         `json:"agent"`
 	}
 
+	updateStatusAndNotify := func(newApiStatus apiv1.AgentStatus, dataForEvent *string, isError bool, errorMessage string, eventTypeForNotification string) {
+		var dataJsonToSend string
+		if dataForEvent != nil {
+			dataJsonToSend = *dataForEvent
+		} else if isError && errorMessage != "" {
+			escapedError := strings.ReplaceAll(errorMessage, "\"", "\\\"")
+			escapedError = strings.ReplaceAll(escapedError, "\n", "\\n")
+			dataJsonToSend = fmt.Sprintf("{\"error\": \"%s\"}", escapedError)
+		} else {
+			dataJsonToSend = "{}"
+		}
+
+		var sseIDForEvent *string
+		if sseID != "" {
+			tempID := sseID
+			sseIDForEvent = &tempID
+		}
+
+		statusSnapshot := newApiStatus
+		apiEvent := &apiv1.AgentTaskEvent{
+			EventType:          eventTypeForNotification,
+			DataJson:           dataJsonToSend,
+			Timestamp:          timestamppb.Now(),
+			IsError:            isError,
+			ErrorMessage:       proto.String(errorMessage),
+			CurrentAgentStatus: &statusSnapshot,
+			SourceEventId:      sseIDForEvent,
+		}
+		s.agentEventChannels.Send(agentTaskID, apiEvent)
+	}
+
+	updateStatusAndNotify(apiv1.AgentStatus_EXECUTING, nil, false, "", "STATUS_UPDATE")
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
 				slog.Info("DeerFlow SSE stream ended (EOF)", "agent_task_id", agentTaskID)
-				// If stream ended and status is still PROCESSING, it might mean completion or an abrupt end.
-				// Let's check the memo's current status in the DB.
 				currentMemo, getErr := s.Store.GetMemo(context.Background(), &store.FindMemo{ID: &memoID})
+				finalStatusOnEOF := apiv1.AgentStatus_COMPLETED
+				var finalMsgOnEOF string
+
 				if getErr == nil && currentMemo != nil && currentMemo.AgentStatus != nil {
-					memoStatus := v1pb.AgentStatus(*currentMemo.AgentStatus)
-					if memoStatus == v1pb.AgentStatus_AGENT_STATUS_PROCESSING {
-						slog.Info("SSE stream ended (EOF) while memo was still PROCESSING. Marking as COMPLETED.", "agent_task_id", agentTaskID)
-						finalResultOnEOF := resultBuilder.String()
-						emptyStr := ""
-						s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, v1pb.AgentStatus_AGENT_STATUS_COMPLETED, &finalResultOnEOF, &emptyStr, nil, nil)
+					currentDBStatus := convertStoreAgentStatusToAPI(*currentMemo.AgentStatus)
+					if currentDBStatus == apiv1.AgentStatus_FAILED || currentDBStatus == apiv1.AgentStatus_AGENT_STATUS_INTERRUPTED || currentDBStatus == apiv1.AgentStatus_CANCELED {
+						finalStatusOnEOF = currentDBStatus
+						if currentMemo.AgentErrorMessage != nil {
+							finalMsgOnEOF = *currentMemo.AgentErrorMessage
+						} else if currentMemo.AgentResultJson != nil {
+							finalMsgOnEOF = *currentMemo.AgentResultJson
+						}
+					} else if currentDBStatus != apiv1.AgentStatus_COMPLETED {
+						slog.Warn("SSE stream ended (EOF) while memo was not in a final state. Marking as COMPLETED.", "agent_task_id", agentTaskID, "db_status", currentDBStatus.String())
+						finalMsgOnEOF = resultBuilder.String()
+						if finalMsgOnEOF == "" {
+							finalMsgOnEOF = "{ \"info\": \"Task ended, no specific result accumulated via message_chunk.\" }"
+						}
 					}
 				} else if getErr != nil {
-					slog.Error("Failed to get memo status on EOF", "error", getErr, "agent_task_id", agentTaskID)
+					slog.Error("Failed to get memo status on EOF, defaulting to COMPLETED", "error", getErr, "agent_task_id", agentTaskID)
+					finalMsgOnEOF = resultBuilder.String()
+					if finalMsgOnEOF == "" {
+						finalMsgOnEOF = "{ \"info\": \"Task ended, no specific result accumulated, and current state unknown.\" }"
+					}
 				}
+				s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, finalStatusOnEOF, &finalMsgOnEOF, nil, &planJSONString, &accumulatedStepsJson)
+				updateStatusAndNotify(finalStatusOnEOF, &finalMsgOnEOF, finalStatusOnEOF == apiv1.AgentStatus_FAILED, "Stream ended", "TASK_FINALIZED")
 			} else {
 				slog.Error("Error reading from DeerFlow SSE stream", "error", err, "agent_task_id", agentTaskID)
-				s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, v1pb.AgentStatus_AGENT_STATUS_FAILED, "", fmt.Sprintf("Stream read error: %v", err))
+				errMsg := fmt.Sprintf("Stream read error: %v", err)
+				s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, apiv1.AgentStatus_FAILED, nil, &errMsg, &planJSONString, &accumulatedStepsJson)
+				updateStatusAndNotify(apiv1.AgentStatus_FAILED, nil, true, errMsg, "TASK_FAILED")
 			}
-			return // Exit goroutine on EOF or error
+			return
 		}
 
 		line = strings.TrimSpace(line)
 
-		if line == "" { // An empty line typically signifies the end of an event block.
-			if dataContent != "" { // Process the event if we have data
-				slog.Info("DeerFlow SSE Event Received",
-					"agent_task_id", agentTaskID,
-					"event_id", id, // Log SSE ID if present
-					"event_type", eventType,
-					"data", dataContent,
-				)
+		if line == "" {
+			if dataContent != "" {
+				slog.Debug("DeerFlow SSE Event Received", "id", sseID, "type", eventTypeStr, "data", dataContent, "agent_task_id", agentTaskID)
 
-				var currentStatusForEvent v1pb.AgentStatus = v1pb.AgentStatus_AGENT_STATUS_PROCESSING // Default, update based on event
-				var isErrorEvent bool = false
-				var errorMessageForEvent string = ""
-				var isPartialEvent bool = true // Assume most data events are partial, unless it's a final one.
+				var currentStatusForEvent apiv1.AgentStatus = apiv1.AgentStatus_EXECUTING
+				var isErrorPayload bool = false
+				var errorMessageInPayload string
+				var dataToSendToClient string = dataContent
+				memosEventType := eventTypeStr
 
-				var agentStepData map[string]interface{} // To store structured step data
-				var finalResultData *string              // For completed tasks
-				var errorData *string                    // For failed tasks or interrupt messages
-				var planDataForUpdate *string            // For plan updates
-				var stepsDataForUpdate *string           // For steps updates
-				originalEventType := eventType // Preserve original for dispatch if normalized later
-
-				switch eventType {
+				switch eventTypeStr {
 				case "message_chunk":
 					var chunkData DeerFlowMessageChunkData
-					if err := json.Unmarshal([]byte(dataContent), &chunkData); err != nil {
-						slog.Error("Failed to unmarshal DeerFlow message_chunk", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
-					} else {
+					if err := json.Unmarshal([]byte(dataContent), &chunkData); err == nil {
 						resultBuilder.WriteString(chunkData.Content)
-						currentStatusForEvent = v1pb.AgentStatus_AGENT_STATUS_PROCESSING
-						isPartialEvent = true
-						agentStepData = map[string]interface{}{"type": "message_chunk", "timestamp": time.Now().Format(time.RFC3339Nano), "content": chunkData.Content, "agent": chunkData.Agent, "id": chunkData.ID}
-
-						if chunkData.FinishReason != nil {
-							isPartialEvent = false
-							slog.Info("FinishReason received", "reason", *chunkData.FinishReason, "agent_task_id", agentTaskID)
-							finishReasonLower := strings.ToLower(*chunkData.FinishReason)
-							if finishReasonLower == "completed" || finishReasonLower == "success" || finishReasonLower == "done" || finishReasonLower == "stop" { // Added "stop"
-								currentStatusForEvent = v1pb.AgentStatus_AGENT_STATUS_COMPLETED
-								resStr := resultBuilder.String()
-								finalResultData = &resStr
-							} else if finishReasonLower == "failed" || finishReasonLower == "error" {
-								currentStatusForEvent = v1pb.AgentStatus_AGENT_STATUS_FAILED
-								errStr := fmt.Sprintf("Task failed with reason: %s. Accumulated output: %s", *chunkData.FinishReason, resultBuilder.String())
-								errorData = &errStr
-								isErrorEvent = true
-								errorMessageForEvent = errStr
-							}
-						}
+					} else {
+						slog.Warn("Failed to unmarshal message_chunk data", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
 					}
+					memosEventType = "MESSAGE_CHUNK"
+					currentStatusForEvent = apiv1.AgentStatus_EXECUTING
 				case "plan":
-					var plan DeerFlowPlanData
-					if err := json.Unmarshal([]byte(dataContent), &plan); err != nil {
-						slog.Error("Failed to unmarshal DeerFlow plan event", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
+					var planData DeerFlowPlanData
+					if err := json.Unmarshal([]byte(dataContent), &planData); err == nil {
+						planJSONBytes, _ := json.Marshal(planData)
+						planJSONString = string(planJSONBytes)
+						s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, apiv1.AgentStatus_PLANNING, nil, nil, &planJSONString, &accumulatedStepsJson)
 					} else {
-						planJSONBytes, _ := json.Marshal(plan)
-						planStr := string(planJSONBytes)
-						planDataForUpdate = &planStr
-						currentStatusForEvent = v1pb.AgentStatus_AGENT_STATUS_PLANNING
-						isPartialEvent = false
-						agentStepData = map[string]interface{}{"type": "plan", "timestamp": time.Now().Format(time.RFC3339Nano), "content": plan}
+						slog.Warn("Failed to unmarshal plan data", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
+						planJSONString = dataContent
 					}
+					memosEventType = "PLAN_GENERATED"
+					currentStatusForEvent = apiv1.AgentStatus_PLANNING
 				case "thought":
-					var thought DeerFlowThoughtData
-					if err := json.Unmarshal([]byte(dataContent), &thought); err != nil {
-						slog.Error("Failed to unmarshal DeerFlow thought event", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
+					memosEventType = "AGENT_THOUGHT"
+					currentStatusForEvent = apiv1.AgentStatus_EXECUTING
+				case "tool_call":
+					var toolCallData DeerFlowToolCallData
+					if err := json.Unmarshal([]byte(dataContent), &toolCallData); err == nil {
+						stepsJSONArray = append(stepsJSONArray, dataContent)
+						stepsBytes, _ := json.Marshal(stepsJSONArray)
+						accumulatedStepsJson = string(stepsBytes)
+						s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, apiv1.AgentStatus_EXECUTING, nil, nil, &planJSONString, &accumulatedStepsJson)
 					} else {
-						currentStatusForEvent = v1pb.AgentStatus_AGENT_STATUS_PROCESSING
-						isPartialEvent = true
-						agentStepData = map[string]interface{}{"type": "thought", "timestamp": time.Now().Format(time.RFC3339Nano), "content": thought, "agent": thought.Agent}
+						slog.Warn("Failed to unmarshal tool_call data", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
 					}
-				case "tool_code", "tool_calls":
-					originalEventType = "tool_call" // Normalize for dispatch consistency
-					var toolCall DeerFlowToolCallData
-					if err := json.Unmarshal([]byte(dataContent), &toolCall); err != nil {
-						slog.Error("Failed to unmarshal DeerFlow tool_call event", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
-					} else {
-						currentStatusForEvent = v1pb.AgentStatus_AGENT_STATUS_EXECUTING
-						isPartialEvent = true
-						agentStepData = map[string]interface{}{"type": "tool_call", "timestamp": time.Now().Format(time.RFC3339Nano), "content": toolCall, "agent": toolCall.Agent}
-					}
-				case "tool_output", "tool_call_result":
-					originalEventType = "tool_result" // Normalize
-					var toolResult DeerFlowToolResultData
-					if err := json.Unmarshal([]byte(dataContent), &toolResult); err != nil {
-						slog.Error("Failed to unmarshal DeerFlow tool_result event", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
-					} else {
-						currentStatusForEvent = v1pb.AgentStatus_AGENT_STATUS_PROCESSING
-						isPartialEvent = true
-						agentStepData = map[string]interface{}{"type": "tool_result", "timestamp": time.Now().Format(time.RFC3339Nano), "content": toolResult, "agent": toolResult.Agent, "is_error": toolResult.IsError}
-						if toolResult.IsError {
-							slog.Warn("Tool execution resulted in an error", "agent_task_id", agentTaskID, "tool_call_id", toolResult.ToolCallID, "output", toolResult.Output)
-							// Optionally set isErrorEvent = true and populate errorMessageForEvent if this should mark the whole task as failed
+					memosEventType = "TOOL_CALL_REQUESTED"
+					currentStatusForEvent = apiv1.AgentStatus_EXECUTING
+				case "tool_result":
+					var toolResultData DeerFlowToolResultData
+					if err := json.Unmarshal([]byte(dataContent), &toolResultData); err == nil {
+						stepsJSONArray = append(stepsJSONArray, dataContent)
+						stepsBytes, _ := json.Marshal(stepsJSONArray)
+						accumulatedStepsJson = string(stepsBytes)
+						s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, apiv1.AgentStatus_EXECUTING, nil, nil, &planJSONString, &accumulatedStepsJson)
+						if toolResultData.IsError {
+							isErrorPayload = true
+							if outputBytes, ok := toolResultData.Output.([]byte); ok {
+								errorMessageInPayload = string(outputBytes)
+							} else if outputStr, ok := toolResultData.Output.(string); ok {
+								errorMessageInPayload = outputStr
+							} else {
+								jsonOutput, _ := json.Marshal(toolResultData.Output)
+								errorMessageInPayload = string(jsonOutput)
+							}
 						}
+					} else {
+						slog.Warn("Failed to unmarshal tool_result data", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
 					}
+					memosEventType = "TOOL_CALL_COMPLETED"
+					currentStatusForEvent = apiv1.AgentStatus_EXECUTING
 				case "interrupt":
-					var interruptData DeerFlowInterruptData
-					if err := json.Unmarshal([]byte(dataContent), &interruptData); err != nil {
-						slog.Error("Failed to unmarshal DeerFlow interrupt event", "error", err, "data", dataContent, "agent_task_id", agentTaskID)
-					} else {
-						currentStatusForEvent = v1pb.AgentStatus_AGENT_STATUS_INTERRUPTED
-						errMsg := fmt.Sprintf("Task interrupted: %s. Feedback required: %v", interruptData.Reason, interruptData.FeedbackRequired)
-						errorData = &errMsg
-						isErrorEvent = true // Treat interrupt as needing attention
-						isPartialEvent = false
-						agentStepData = map[string]interface{}{"type": "interrupt", "timestamp": time.Now().Format(time.RFC3339Nano), "content": interruptData, "agent": interruptData.Agent}
-						errorMessageForEvent = errMsg
+					memosEventType = "USER_INTERRUPT_REQUIRED"
+					currentStatusForEvent = apiv1.AgentStatus_AGENT_STATUS_INTERRUPTED
+					s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, currentStatusForEvent, nil, nil, &planJSONString, &accumulatedStepsJson)
+				case "task_completed":
+					finalResult := resultBuilder.String()
+					var deerflowResult struct {
+						Result any `json:"result"`
 					}
-				default:
-					slog.Warn("Received unknown DeerFlow SSE event type", "event_type", eventType, "data", dataContent, "agent_task_id", agentTaskID)
-					isPartialEvent = true
-					agentStepData = map[string]interface{}{"type": "unknown", "timestamp": time.Now().Format(time.RFC3339Nano), "raw_event_type": eventType, "raw_data": dataContent}
-				}
-
-				if agentStepData != nil {
-					stepJSONBytes, err := json.Marshal(agentStepData)
-					if err == nil {
-						stepsJSONArray = append(stepsJSONArray, string(stepJSONBytes))
-						allStepsBytes, err := json.Marshal(stepsJSONArray)
-						if err == nil {
-							tempStepsStr := string(allStepsBytes)
-							stepsDataForUpdate = &tempStepsStr
+					if err := json.Unmarshal([]byte(dataContent), &deerflowResult); err == nil && deerflowResult.Result != nil {
+						if resStr, ok := deerflowResult.Result.(string); ok {
+							finalResult = resStr
 						} else {
-							slog.Error("Failed to marshal all agent steps array", "error", err, "agent_task_id", agentTaskID)
+							resBytes, _ := json.Marshal(deerflowResult.Result)
+							finalResult = string(resBytes)
 						}
+					}
+					memosEventType = "TASK_COMPLETED"
+					currentStatusForEvent = apiv1.AgentStatus_COMPLETED
+					s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, currentStatusForEvent, &finalResult, nil, &planJSONString, &accumulatedStepsJson)
+					dataToSendToClient = fmt.Sprintf("{\"result\": \"%s\"}", strings.ReplaceAll(finalResult, "\"", "\\\""))
+				case "task_failed":
+					var deerflowError struct {
+						Error string `json:"error"`
+					}
+					if err := json.Unmarshal([]byte(dataContent), &deerflowError); err == nil && deerflowError.Error != "" {
+						errorMessageInPayload = deerflowError.Error
 					} else {
-						slog.Error("Failed to marshal agent step data", "error", err, "step_data", agentStepData, "agent_task_id", agentTaskID)
+						errorMessageInPayload = dataContent
 					}
+					isErrorPayload = true
+					memosEventType = "TASK_FAILED"
+					currentStatusForEvent = apiv1.AgentStatus_FAILED
+					s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, currentStatusForEvent, nil, &errorMessageInPayload, &planJSONString, &accumulatedStepsJson)
+					dataToSendToClient = fmt.Sprintf("{\"error\": \"%s\"}", strings.ReplaceAll(errorMessageInPayload, "\"", "\\\""))
+				default:
+					slog.Debug("Unknown or unhandled DeerFlow event type, forwarding as generic", "type", eventTypeStr, "data", dataContent, "agent_task_id", agentTaskID)
+					memosEventType = "UNKNOWN_" + strings.ToUpper(eventTypeStr)
 				}
 
-				s.updateMemoAgentStatus(context.Background(), memoID, agentTaskID, currentStatusForEvent, finalResultData, errorData, planDataForUpdate, stepsDataForUpdate)
+				updateStatusAndNotify(currentStatusForEvent, &dataToSendToClient, isErrorPayload, errorMessageInPayload, memosEventType)
 
-				// Dispatch event to internal channel for StreamAgentTaskEvents subscribers
-				s.agentEventChannelsMutex.RLock()
-				ch, exists := s.agentEventChannels[agentTaskID]
-				s.agentEventChannelsMutex.RUnlock()
-
-				if exists {
-					var finishReasonForEvent *string
-					if currentStatusForEvent == v1pb.AgentStatus_AGENT_STATUS_COMPLETED && finalResultData != nil {
-						// Extract finish reason if it was part of a message_chunk that completed the task
-						if eventType == "message_chunk" {
-							var chunkData DeerFlowMessageChunkData
-							if json.Unmarshal([]byte(dataContent), &chunkData) == nil {
-								finishReasonForEvent = chunkData.FinishReason
-							}
-						}
-					} else if currentStatusForEvent == v1pb.AgentStatus_AGENT_STATUS_FAILED && errorData != nil {
-						// Potentially extract finish_reason if error also came from message_chunk finish_reason
-						if eventType == "message_chunk" {
-							var chunkData DeerFlowMessageChunkData
-							if json.Unmarshal([]byte(dataContent), &chunkData) == nil {
-								finishReasonForEvent = chunkData.FinishReason
-							}
-						}
-					}
-
-					agentEvent := &v1pb.AgentTaskEvent{
-						EventType:          originalEventType, // Use original/normalized type
-						DataJson:           dataContent, // Send raw data for client flexibility
-						Timestamp:          timestamppb.Now(),
-						IsPartial:          isPartialEvent,
-						IsError:            isErrorEvent,
-						ErrorMessage:       &errorMessageForEvent, // Ensure this is set correctly
-						CurrentAgentStatus: &currentStatusForEvent,
-						FinishReason:       finishReasonForEvent,
-						SourceEventId:      &id, // Pass SSE ID if available
-					}
-					// Non-blocking send to channel
-					select {
-					case ch <- agentEvent:
-						slog.Debug("Dispatched agent event to channel", "agent_task_id", agentTaskID, "event_type", agentEvent.EventType)
-					default:
-						slog.Warn("Agent event channel full or closed, unable to dispatch event", "agent_task_id", agentTaskID, "event_type", agentEvent.EventType)
-					}
-				}
-
-				// Reset for next event block
 				dataContent = ""
-				eventType = ""
-				id = "" // Reset SSE ID
+				eventTypeStr = ""
+				sseID = ""
 			}
-			continue
-		}
-
-		if strings.HasPrefix(line, "event:") {
-			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		} else if strings.HasPrefix(line, "event:") {
+			eventTypeStr = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 		} else if strings.HasPrefix(line, "data:") {
-			// Data can span multiple lines, but SSE spec says it's terminated by a blank line.
-			// For simplicity here, we'll assume data is on a single line after "data:".
-			// A more robust parser would handle multi-line data fields.
-			currentDataLine := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if dataContent == "" {
-				dataContent = currentDataLine
-			} else {
-				// This would be for multi-line data, which we are not fully handling yet.
-				// dataContent += "\n" + currentDataLine 
-				slog.Warn("Received multi-line data, only first line processed for now", "agent_task_id", agentTaskID, "line", line)
+			if dataContent != "" {
+				dataContent += "\n"
 			}
+			dataContent += strings.TrimPrefix(line, "data:")
 		} else if strings.HasPrefix(line, "id:") {
-			id = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
-		} else if strings.HasPrefix(line, ":") {
-			// This is a comment line, ignore.
-			slog.Debug("SSE Comment ignored", "line", line)
-		} else {
-			slog.Warn("Unrecognized SSE line format", "line", line, "agent_task_id", agentTaskID)
+			sseID = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
 		}
 	}
 }
 
 // StreamAgentTaskEvents is a server-streaming RPC that sends AgentTaskEvents to the client.
-func (s *APIV1Service) StreamAgentTaskEvents(request *v1pb.StreamAgentTaskEventsRequest, stream v1pb.MemoService_StreamAgentTaskEventsServer) error {
+func (s *APIV1Service) StreamAgentTaskEvents(request *apiv1.StreamAgentTaskEventsRequest, stream apiv1.MemoService_StreamAgentTaskEventsServer) error {
 	agentTaskID := request.AgentTaskId
 	if agentTaskID == "" {
 		return status.Errorf(codes.InvalidArgument, "agent_task_id is required")
 	}
 
 	slog.Info("Client subscribed to agent events", "agent_task_id", agentTaskID)
+	eventChan := make(chan *apiv1.AgentTaskEvent, 100)
 
-	// Create a new channel for this client or retrieve if already exists (though typically one client per stream call)
-	// For simplicity, we create a new channel for each subscriber. HandleDeerflowSSE will publish to all.
-	// A more robust system might use a single channel per agentTaskID and fan-out, but this is simpler for now.
-	eventChan := make(chan *v1pb.AgentTaskEvent, 10) // Buffered channel
-
-	s.agentEventChannelsMutex.Lock()
-	// If there are other subscribers, this will overwrite, which is not ideal for fan-out.
-	// A list of channels per agentTaskID would be needed for true fan-out to multiple stream calls for the SAME taskID.
-	// For now, assuming one active StreamAgentTaskEvents call per agentTaskID at a time by design, or last one wins.
-	// Or, better: check if a channel already exists and potentially error out or use it (complex concurrency).
-	// Simplest for now: each call to StreamAgentTaskEvents is for a client that wants events for this task.
-	// The producer (handleDeerflowSSE) needs to know about this channel.
-	// This requires handleDeerflowSSE to look up this channel. Let's refine this.
-
-	// Refined approach: Listener registers itself.
-	// The channel should be associated with the agentTaskID allowing the producer to find it.
-	// We will use a list of channels to support multiple listeners for the same task ID.
-
-	// Let's store a list of channels for a given agent task ID.
-	// This part should be in a new helper method for registering/unregistering listeners.
-	// For brevity in this step, we'll directly manipulate the map here but acknowledge it needs to be robust.
-
-	// Corrected simplified logic for single listener per taskID for now via this map (producer needs to find this specific channel)
-	// This is still not a full fan-out. The producer needs to send to THE channel for this agentTaskID.
-	// Let's assume that `agentEventChannels` stores THE authoritative channel that the producer writes to.
-	// And this RPC reads from it. If it doesn't exist, the producer hasn't started or it's an error.
-
-	// Let's redefine: agentEventChannels will map agentTaskID to a struct that manages multiple subscribers.
-	// For now, let's stick to a simpler model for the edit: create a channel, the producer `handleDeerflowSSE`
-	// will attempt to send to a channel registered under this agentTaskID.
-
-	// Producer side (handleDeerflowSSE) will need to: s.agentEventChannelsMutex.Lock(); ch := s.agentEventChannels[agentTaskID]; s.agentEventChannelsMutex.Unlock(); if ch != nil { ch <- event }
-	// Consumer side (this RPC):
-	s.agentEventChannels[agentTaskID] = eventChan
-	s.agentEventChannelsMutex.Unlock()
-
+	s.agentEventChannels.Register(agentTaskID, eventChan)
 	defer func() {
-		s.agentEventChannelsMutex.Lock()
-		delete(s.agentEventChannels, agentTaskID) // Remove this specific channel
-		s.agentEventChannelsMutex.Unlock()
-		close(eventChan) // Close the channel when the RPC is done
+		s.agentEventChannels.Unregister(agentTaskID, eventChan)
 		slog.Info("Client unsubscribed from agent events", "agent_task_id", agentTaskID)
 	}()
 
@@ -1336,18 +1285,18 @@ func (s *APIV1Service) StreamAgentTaskEvents(request *v1pb.StreamAgentTaskEvents
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Client connection closed or context cancelled", "agent_task_id", agentTaskID, "error", ctx.Err())
+			slog.Info("Client connection closed or context cancelled for agent events", "agent_task_id", agentTaskID, "error", ctx.Err())
 			return ctx.Err()
 		case event, ok := <-eventChan:
 			if !ok {
-				slog.Info("Event channel closed by producer", "agent_task_id", agentTaskID)
-				return nil // Graceful end if channel is closed
+				slog.Info("Agent event channel closed by producer (task likely finished)", "agent_task_id", agentTaskID)
+				return nil
 			}
 			if err := stream.Send(event); err != nil {
 				slog.Error("Failed to send agent event to client", "error", err, "agent_task_id", agentTaskID)
 				return err
 			}
-			slog.Debug("Sent agent event to client", "agent_task_id", agentTaskID, "event_type", event.EventType)
+			slog.Debug("Sent agent event to client via stream", "agent_task_id", agentTaskID, "event_type", event.EventType)
 		}
 	}
 }
@@ -1356,17 +1305,19 @@ func (s *APIV1Service) StreamAgentTaskEvents(request *v1pb.StreamAgentTaskEvents
 func (s *APIV1Service) updateMemoAgentStatus(
 	ctx context.Context,
 	memoID int32,
-	agentTaskID string, // Used for logging/verification, not for lookup
-	status v1pb.AgentStatus,
-	resultJSON *string, // Changed to pointer for optionality
-	errorMessage *string, // Changed to pointer for optionality
-	planJSON *string, // Added optional plan JSON
-	stepsJSON *string, // Added optional steps JSON
+	agentTaskID string,
+	status apiv1.AgentStatus,
+	resultJSON *string,
+	errorMessage *string,
+	planJSON *string,
+	stepsJSON *string,
 ) {
 	update := &store.UpdateMemo{
-		ID:          memoID,
-		AgentStatus: (*int32)(convertAgentStatusToStore(status)),
+		ID: memoID,
 	}
+	storeStatus := convertAgentStatusToStore(status)
+	update.AgentStatus = &storeStatus
+
 	if resultJSON != nil {
 		update.AgentResultJson = resultJSON
 	}
@@ -1380,14 +1331,26 @@ func (s *APIV1Service) updateMemoAgentStatus(
 		update.AgentStepsJson = stepsJSON
 	}
 
-	// It's crucial that this update doesn't overwrite other agent fields unintentionally.
-	// If AgentPlanJson, AgentStepsJson etc. are populated incrementally, this simple update is fine.
-	// If they are set once, ensure this helper doesn't nil them out if result/error is empty.
-	// The current UpdateMemo store logic should handle partial updates correctly if fields are nil.
-
 	if err := s.Store.UpdateMemo(ctx, update); err != nil {
-		slog.Error("Failed to update memo agent status in DB", "error", err, "memo_id", memoID, "target_status", status.String())
+		slog.Error("Failed to update memo agent status in DB",
+			"error", err, "memo_id", memoID, "agent_task_id", agentTaskID,
+			"target_status", status.String(), "result_len", lenPtr(resultJSON),
+			"error_len", lenPtr(errorMessage), "plan_len", lenPtr(planJSON), "steps_len", lenPtr(stepsJSON))
 	} else {
-		slog.Info("Memo agent status updated in DB", "memo_id", memoID, "target_status", status.String())
+		slog.Info("Memo agent status updated in DB",
+			"memo_id", memoID, "agent_task_id", agentTaskID,
+			"target_status", status.String(), "result_len", lenPtr(resultJSON),
+			"error_len", lenPtr(errorMessage), "plan_len", lenPtr(planJSON), "steps_len", lenPtr(stepsJSON))
 	}
+}
+
+func lenPtr(s *string) int {
+	if s == nil {
+		return 0
+	}
+	return len(*s)
+}
+
+func convertStoreAgentStatusToAPI(storeStatusValue int32) apiv1.AgentStatus {
+	return apiv1.AgentStatus(storeStatusValue)
 }

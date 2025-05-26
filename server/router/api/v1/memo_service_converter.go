@@ -86,30 +86,29 @@ func (s *APIV1Service) convertMemoFromStore(ctx context.Context, memo *store.Mem
 	memoMessage.Snippet = snippet
 
 	// Populate Agentic fields
-	if memo.Payload != nil { // Assuming agent fields might be in payload or directly on memo store object
-		// Adapt these lines based on where agent fields are actually stored in store.Memo
-		// For now, let's assume they are directly on store.Memo and are nullable (e.g. *string, *int32)
-		if memo.AgentTaskID != nil {
-			memoMessage.AgentTaskId = *memo.AgentTaskID
-		}
-		if memo.AgentStatus != nil {
-			memoMessage.AgentStatus = convertAgentStatusFromStore(*memo.AgentStatus)
-		}
-		if memo.AgentQueryText != nil {
-			memoMessage.AgentQueryText = *memo.AgentQueryText
-		}
-		if memo.AgentPlanJson != nil {
-			memoMessage.AgentPlanJson = *memo.AgentPlanJson
-		}
-		if memo.AgentStepsJson != nil {
-			memoMessage.AgentStepsJson = *memo.AgentStepsJson
-		}
-		if memo.AgentResultJson != nil {
-			memoMessage.AgentResultJson = *memo.AgentResultJson
-		}
-		if memo.AgentErrorMessage != nil {
-			memoMessage.AgentErrorMessage = *memo.AgentErrorMessage
-		}
+	// Assuming agent fields are directly on store.Memo and are nullable (e.g. *string, *int32)
+	// The proto definition for these fields in v1pb.Memo should be *string, not *wrapperspb.StringValue
+	if memo.AgentTaskID != nil {
+		memoMessage.AgentTaskId = memo.AgentTaskID // Direct assignment of pointer
+	}
+	if memo.AgentStatus != nil {
+		apiStatus := convertAgentStatusFromStore(*memo.AgentStatus)
+		memoMessage.AgentStatus = &apiStatus // Assign address of the converted value
+	}
+	if memo.AgentQueryText != nil {
+		memoMessage.AgentQueryText = memo.AgentQueryText // Direct assignment of pointer
+	}
+	if memo.AgentPlanJson != nil {
+		memoMessage.AgentPlanJson = memo.AgentPlanJson // Direct assignment of pointer
+	}
+	if memo.AgentStepsJson != nil {
+		memoMessage.AgentStepsJson = memo.AgentStepsJson // Direct assignment of pointer
+	}
+	if memo.AgentResultJson != nil {
+		memoMessage.AgentResultJson = memo.AgentResultJson // Direct assignment of pointer
+	}
+	if memo.AgentErrorMessage != nil {
+		memoMessage.AgentErrorMessage = memo.AgentErrorMessage // Direct assignment of pointer
 	}
 
 	return memoMessage, nil
